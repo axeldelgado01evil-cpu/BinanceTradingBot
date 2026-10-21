@@ -6,6 +6,7 @@ No Binance order, transfer, or withdrawal endpoint is present in this program.
 import base64
 import hashlib
 import hmac
+import html
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
@@ -149,14 +151,18 @@ def global_context():
 
 def headlines():
     try:
-        response = HTTP.get("https://www.coindesk.com/arc/outboundfeeds/rss/", timeout=15)
+        response = HTTP.get("https://www.criptonoticias.com/feed/", timeout=15)
         response.raise_for_status()
         root = ElementTree.fromstring(response.content)
         result = []
         for item in root.findall("./channel/item"):
             title = re.sub(r"\s+", " ", item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
-            if title and link.startswith("https://www.coindesk.com/"):
+            market_words = ("precio", "mercado", "demanda", "presión vendedora",
+                            "sube", "cae", "caída", "tasas", "inflación",
+                            "etf", "volatilidad", "rally")
+            if (title and link.startswith("https://www.criptonoticias.com/")
+                    and any(word in title.lower() for word in market_words)):
                 result.append((title[:100], link))
             if len(result) == 2:
                 break
@@ -223,7 +229,7 @@ def close_paper(state, symbol, price, reason, stamp):
     state["trades"].append({"time": stamp, "side": "SELL", "symbol": symbol,
                             "price": price, "quantity": position["quantity"],
                             "fee": fee, "pnl": pnl, "reason": reason})
-    return f"VENTA FICTICIA {symbol}: P/L {pnl:+.2f} USDT ({reason})"
+    return f"🧪 Venta de prueba de {symbol[:-4]}: resultado {pnl:+.2f} USDT ({reason})."
 
 
 def open_paper(state, symbol, item, stamp):
@@ -244,8 +250,9 @@ def open_paper(state, symbol, item, stamp):
     state["trades"].append({"time": stamp, "side": "BUY", "symbol": symbol,
                             "price": price, "quantity": quantity,
                             "fee": quantity * price * FEE})
-    return (f"COMPRA FICTICIA {symbol}: {budget:.2f} USDT a {price:g}; "
-            f"stop {stop:g}; objetivo {target:g}; riesgo estimado <=1 USDT")
+    return (f"🧪 Compra de prueba de {symbol[:-4]} por {budget:.2f} USDT. "
+            f"Precio {format_price(price)}, salida por pérdida {format_price(stop)}, "
+            f"objetivo {format_price(target)}.")
 
 
 def update_paper(state, analyses, stamp):
@@ -263,10 +270,10 @@ def update_paper(state, analyses, stamp):
     value = equity(state, prices)
     if value <= 85 and state["status"] != "halted":
         state["status"] = "halted"
-        events.append(f"SIMULACION DETENIDA: cartera {value:.2f} USDT <=85")
+        events.append(f"⛔ Prueba detenida: la cartera bajó a {value:.2f} USDT.")
     elif value <= 95 and state["status"] == "active":
         state["status"] = "paused"
-        events.append(f"NUEVAS COMPRAS FICTICIAS PAUSADAS: cartera {value:.2f} USDT <=95")
+        events.append(f"⏸ Nuevas compras de prueba pausadas: cartera {value:.2f} USDT.")
     if state["status"] == "active":
         for symbol in CORE:
             item = analyses[symbol]
@@ -331,87 +338,113 @@ def account_snapshot():
 
 
 def format_price(price):
-    if price < 1:
-        return f"{price:,.8f}".rstrip("0").rstrip(".")
-    return f"{price:,.2f}"
+    digits = 8 if price < 0.01 else 5 if price < 1 else 2
+    result = f"{price:,.{digits}f}".replace(",", "_").replace(".", ",").replace("_", ".")
+    return result.rstrip("0").rstrip(",") if digits > 2 else result
+
+
+def format_percent(value, digits=1):
+    return f"{value:+.{digits}f}".replace(".", ",") + " %"
 
 
 def build_report(analyses, context, news, state, account, now, events):
     breadth = sum(item["change"] > 0 for item in analyses.values())
-    sample_pct = 100 * breadth / len(analyses)
     market_change = context.get("market_change")
-    trend = ("ALCISTA" if market_change is not None and market_change > 1 and sample_pct >= 60
-             else "BAJISTA" if market_change is not None and market_change < -1
-             and sample_pct <= 40 else "MIXTO/LATERAL")
-    lines = [f"BINANCE | INFORME 15 MIN | {now:%Y-%m-%d %H:%M} UTC",
-             f"Mercado: {trend}. Muestra en verde 24h: {breadth}/{len(analyses)}."]
-    if market_change is not None:
-        lines.append(f"Mercado cripto 24h {market_change:+.1f}% | Dominancia BTC {context['btc_dominance']:.1f}% (CoinGecko)")
+    sample_pct = 100 * breadth / len(analyses)
+    if market_change is not None and market_change > 1 and sample_pct >= 60:
+        icon, mood = "🟢", "Mayormente alcista"
+    elif market_change is not None and market_change < -1 and sample_pct <= 40:
+        icon, mood = "🔴", "Mayormente bajista"
     else:
-        lines.append("Datos globales no disponibles; muestra limitada a Binance.")
+        icon, mood = "🟡", "Mixto; conviene esperar confirmaciones"
+    try:
+        local_time = now.astimezone(ZoneInfo("Europe/Madrid"))
+        clock_label = "hora de España"
+    except ZoneInfoNotFoundError:
+        local_time = now
+        clock_label = "UTC"
+    lines = [f"📊 <b>Mercado · {local_time:%H:%M} ({clock_label})</b>",
+             f"{icon} {mood}."]
+    if market_change is not None:
+        lines.append(f"Mercado cripto en 24 h: {format_percent(market_change)} (CoinGecko).")
+        lines.append(f"De {len(analyses)} monedas observadas, {breadth} subieron; es solo una muestra.")
+    else:
+        lines.append(f"De {len(analyses)} monedas observadas, {breadth} subieron en 24 h.")
     if "fear_greed" in context:
-        lines.append(f"Miedo/Codicia {context['fear_greed']}/100 ({context['fear_greed_label']}; Alternative.me, dato diario)")
-    lines.append("\nBTC, ETH, SOL (velas cerradas 4h y diarias):")
+        lines.append(f"Ánimo del mercado: {context['fear_greed']}/100, índice diario de Alternative.me.")
+
+    lines.append("\n⏱ <b>Bitcoin, Ethereum y Solana</b>")
     for symbol in CORE:
         item = analyses[symbol]
-        action = ("vigilar entrada" if candidate(item) else
-                  "precaucion" if item["trend"] == "bajista" or item["rsi"] >= 75
-                  else "esperar confirmacion")
-        lines.append(
-            f"{symbol[:-4]} {format_price(item['price'])} "
-            f"(15m {item['change_15m']:+.2f}%; 24h {item['change']:+.1f}%) "
-            f"{item['trend']}; RSI {item['rsi']:.0f}; MACD {'+' if item['histogram'] > 0 else '-'}; "
-            f"vol {item['volume_ratio']:.1f}x; "
-            f"S {format_price(item['support'])}/R {format_price(item['resistance'])}; {action}"
-        )
-    alt = sorted((item for s, item in analyses.items()
-                  if s not in CORE and s not in MEMES and candidate(item)),
-                 key=lambda x: x["volume_24h"], reverse=True)[:2]
-    memes = sorted((analyses[s] for s in MEMES if s in analyses
-                    and candidate(analyses[s], meme=True)),
-                   key=lambda x: x["volume_24h"], reverse=True)[:2]
-    radar = sorted((i for s, i in analyses.items()
-                    if s not in CORE and s not in MEMES and i["volume_24h"] >= 30_000_000),
-                   key=lambda i: i["change"], reverse=True)[:2]
-    lines.append("\nCriptos con senal: " + (
-        "; ".join(f"{i['symbol'][:-4]} {i['change']:+.1f}% / vol {i['volume_ratio']:.1f}x"
-                  for i in alt) if alt else "ninguna cumple todos los filtros"))
-    if radar:
-        lines.append("Radar altcoins (sin recomendacion): "
-                     + "; ".join(f"{i['symbol'][:-4]} {i['change']:+.1f}%"
-                                 for i in radar))
-    meme_radar = sorted((analyses[s] for s in MEMES if s in analyses),
-                        key=lambda i: i["volume_24h"], reverse=True)[:2]
-    lines.append("Memecoins con senal experimental: " + (
-        "; ".join(f"{i['symbol'][:-4]} {i['change']:+.1f}% / vol24h {i['volume_24h']/1e6:.0f}M USDT"
-                  for i in memes) if memes else "ninguna cumple todos los filtros"))
-    if meme_radar:
-        lines.append("Radar memecoin (sin recomendacion): "
-                     + "; ".join(f"{i['symbol'][:-4]} {i['change']:+.1f}%"
-                                 for i in meme_radar))
-    lines.append("Memecoins: no se verificaron tenedores ni contrato; revisar antes de operar.")
-    if news:
-        lines.append("\nTitulares CoinDesk (no explican necesariamente el movimiento):")
-        lines.extend(f"- {title} {url}" for title, url in news)
+        if candidate(item):
+            decision = "🟢 Posible entrada para estudiar; no es una orden."
+        elif item["trend"] == "bajista" or item["rsi"] >= 75:
+            decision = "🔴 Riesgo elevado; esperaría."
+        else:
+            decision = "🟡 Sin señal clara; esperaría."
+        lines.append(f"• <b>{symbol[:-4]}</b>: {format_price(item['price'])} USDT "
+                     f"| 15 min {format_percent(item['change_15m'], 2)} "
+                     f"| 24 h {format_percent(item['change'])}")
+        lines.append("  " + decision)
+
+    other = [item for symbol, item in analyses.items() if symbol not in CORE and symbol not in MEMES]
+    picks = sorted((item for item in other if candidate(item)),
+                   key=lambda item: item["volume_24h"], reverse=True)[:2]
+    radar = sorted((item for item in other if item["volume_24h"] >= 30_000_000),
+                   key=lambda item: item["change"], reverse=True)[:2]
+    lines.append("\n🔎 <b>Otras criptos</b>")
+    if picks:
+        lines.append("Cumplen filtros para estudiar: " + ", ".join(i["symbol"][:-4] for i in picks) + ".")
+    elif radar:
+        lines.append("Para observar (todavía sin señal): " + ", ".join(
+            f"{i['symbol'][:-4]} {format_percent(i['change'])}" for i in radar) + ".")
     else:
-        lines.append("\nNoticias: fuente no disponible.")
-    prices = {s: i["price"] for s, i in analyses.items()}
-    held = ", ".join(s[:-4] for s in state["positions"]) or "ninguna"
-    lines.append(f"\nSIMULACION: {equity(state, prices):.2f} USDT; efectivo {state['cash']:.2f}; posiciones {held}; {state['status']}.")
-    lines.append("Objetivo BTC40/ETH25/SOL15/reserva20; riesgo estimado <=1 USDT por entrada; pausa <=95, alto <=85.")
-    if events:
-        lines.extend(["Eventos:"] + events)
-    lines.append(account)
-    lines.append("Escenarios: mejora si BTC/ETH sostienen medias con volumen; riesgo si pierden soportes. Sin confirmacion: esperar.")
-    lines.append("Sin ordenes reales ni garantia de ganancias. GitHub puede retrasar u omitir ejecuciones.")
+        lines.append("No veo candidatos líquidos con señal clara ahora.")
+
+    meme_items = [analyses[s] for s in MEMES if s in analyses]
+    meme_picks = [i for i in meme_items if candidate(i, meme=True)]
+    meme_radar = sorted(meme_items, key=lambda i: i["volume_24h"], reverse=True)[:2]
+    lines.append("🐸 <b>Memecoins</b>")
+    if meme_picks:
+        lines.append("Señal experimental para estudiar: " + ", ".join(i["symbol"][:-4] for i in meme_picks[:2]) + ".")
+    elif meme_radar:
+        lines.append("En observación, sin señal: " + ", ".join(
+            f"{i['symbol'][:-4]} {format_percent(i['change'])}" for i in meme_radar) + ".")
+    lines.append("Son muy volátiles; el bot no verifica concentración de tenedores ni contratos.")
+
+    bitcoin = analyses["BTCUSDT"]
+    support, resistance = bitcoin["support"], bitcoin["resistance"]
+    lines.append("\n🧭 <b>Qué vigilar</b>")
+    if bitcoin["price"] > resistance:
+        lines.append(f"BTC superó {format_price(resistance)} USDT. Si mantiene esa zona con volumen, podría seguir subiendo.")
+    else:
+        lines.append(f"Si BTC supera {format_price(resistance)} USDT con volumen, podría mejorar.")
+    lines.append(f"Si pierde {format_price(support)} USDT, aumenta el riesgo de caída.")
+
+    prices = {symbol: item["price"] for symbol, item in analyses.items()}
+    held = ", ".join(symbol[:-4] for symbol in state["positions"]) or "ninguna"
+    state_label = {"active": "activa", "paused": "pausada", "halted": "detenida"}[state["status"]]
+    lines.append("\n🧪 <b>Prueba con 100 USDT ficticios</b>")
+    lines.append(f"Valor actual: {format_price(equity(state, prices))} USDT. Posiciones: {held}. Estado: {state_label}.")
+    lines.extend(html.escape(event) for event in events)
+    lines.append("\n🏦 " + html.escape(account))
+    if news:
+        title, url = news[0]
+        lines.append(f'📰 <b>Noticia para leer</b>: <a href="{html.escape(url, quote=True)}">'
+                     f'{html.escape(title)}</a> (CriptoNoticias).')
+    lines.append("\n<i>Solo análisis y operaciones de prueba. No se ejecutan compras reales. "
+                 "GitHub puede retrasar algún informe.</i>")
     return "\n".join(lines)
 
 
+
 def send_telegram(message):
+    if len(message) > 4000:
+        raise ValueError("Informe demasiado largo para Telegram")
     response = HTTP.post(
         "https://api.telegram.org/bot" + os.environ["TELEGRAM_BOT_TOKEN"] + "/sendMessage",
-        json={"chat_id": os.environ["TELEGRAM_CHAT_ID"], "text": message[:4000],
-              "disable_web_page_preview": True}, timeout=25)
+        json={"chat_id": os.environ["TELEGRAM_CHAT_ID"], "text": message,
+              "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=25)
     response.raise_for_status()
     if not response.json().get("ok"):
         raise RuntimeError("Telegram rechazo el mensaje")

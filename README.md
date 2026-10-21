@@ -14,8 +14,8 @@ ejecuciones programadas; no es un servicio de tiempo real. Cada informe muestra:
 - cambios de BTC/ETH/SOL en la ultima vela cerrada de 15 minutos y en 24 horas;
 - tendencia basada en velas cerradas de 4 horas y diarias, RSI, MACD, volumen,
   soportes y resistencias;
-- contexto global y dominancia BTC de CoinGecko; indice Miedo/Codicia diario
-  de Alternative.me; dos titulares recientes de CoinDesk;
+- contexto global de CoinGecko; indice Miedo/Codicia diario
+  de Alternative.me; un titular de mercado reciente de CriptoNoticias;
 - un radar de altcoins liquidas y memecoins, distinguiendo candidatos que
   cumplen filtros de las monedas que solo merecen observacion;
 - cartera ficticia, operaciones simuladas, y, si se configura, un resumen

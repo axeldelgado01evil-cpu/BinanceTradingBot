@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 import main
 
@@ -34,7 +35,7 @@ class PaperTradingTests(unittest.TestCase):
         for symbol in analyses:
             analyses[symbol] = item(symbol, price=90, candle_id=2)
         events = main.update_paper(state, analyses, "2026-10-21T00:15:00Z")
-        self.assertTrue(any("VENTA FICTICIA" in event for event in events))
+        self.assertTrue(any("Venta de prueba" in event for event in events))
         self.assertEqual(state["positions"], {})
         self.assertTrue(all(trade["pnl"] < 0 for trade in state["trades"] if trade["side"] == "SELL"))
 
@@ -53,7 +54,19 @@ class PaperTradingTests(unittest.TestCase):
         events = main.update_paper(state, analyses, "2026-10-21T00:00:00Z")
         self.assertEqual(state["status"], "paused")
         self.assertEqual(state["positions"], {})
-        self.assertTrue(any("PAUSADAS" in event for event in events))
+        self.assertTrue(any("pausadas" in event for event in events))
+
+    def test_report_is_short_readable_and_escapes_headlines(self):
+        analyses = {s: item(s) for s in main.CORE}
+        message = main.build_report(
+            analyses, {"market_change": 0.2, "btc_dominance": 60},
+            [("BTC & <script>", "https://www.criptonoticias.com/?a=1&b=2")],
+            main.blank_state(), "Cuenta Binance: no conectada.",
+            datetime(2026, 10, 21, tzinfo=timezone.utc), [])
+        self.assertIn("⏱ <b>Bitcoin, Ethereum y Solana</b>", message)
+        self.assertIn("BTC &amp; &lt;script&gt;", message)
+        self.assertIn("a=1&amp;b=2", message)
+        self.assertLess(len(message), 4000)
 
 
 if __name__ == "__main__":
