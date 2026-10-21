@@ -24,7 +24,7 @@ def enviar_telegram(mensaje):
 
 def precio_binance(simbolo):
     respuesta = requests.get(
-        "https://api.binance.com/api/v3/ticker/price",
+        "https://data-api.binance.vision/api/v3/ticker/price",
         params={"symbol": simbolo},
         timeout=20
     )
