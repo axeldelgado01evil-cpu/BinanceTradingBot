@@ -462,8 +462,13 @@ def main():
             print(f"Se omite {symbol}: datos no disponibles")
     state, sha = load_state()
     events = update_paper(state, analyses, now.isoformat())
+    account = account_snapshot()
+    if account.startswith("Cuenta Binance Spot"):
+        print("BINANCE_ACCOUNT_STATUS=OK")
+    else:
+        print("BINANCE_ACCOUNT_STATUS=ERROR: " + account)
     message = build_report(analyses, global_context(), headlines(), state,
-                           account_snapshot(), now, events)
+                           account, now, events)
     send_telegram(message)
     save_state(state, sha)
     print(f"Informe enviado: {len(analyses)} activos, {len(events)} eventos ficticios")
