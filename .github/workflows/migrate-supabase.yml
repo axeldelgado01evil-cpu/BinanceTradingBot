@@ -1,0 +1,55 @@
+name: Trasladar claves al servidor gratuito
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  trasladar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Importar una sola vez en Supabase Vault
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+          SUPABASE_PUBLIC_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxZHlhZ3p2anNoaGlpcWt6ZmF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3MzY4MDEsImV4cCI6MjEwODMxMjgwMX0.Fur6qhnWkjszbLVzMqMAdKORDC-d-Hxm3ZleW2u9yUw
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from urllib.request import Request, urlopen
+          from urllib.parse import urlencode
+          from urllib.error import HTTPError, URLError
+          base = 'https://qqdyagzvjshhiiqkzfat.supabase.co'
+          audience = base + '/import-bot-secrets'
+          try:
+              oidc_url = os.environ['ACTIONS_ID_TOKEN_REQUEST_URL'] + '&' + urlencode({'audience': audience})
+              request = Request(oidc_url, headers={'Authorization': 'Bearer ' + os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']})
+              with urlopen(request, timeout=20) as response:
+                  identity = json.load(response)['value']
+              state_url = 'https://raw.githubusercontent.com/' + os.environ['GITHUB_REPOSITORY'] + '/' + os.environ['GITHUB_SHA'] + '/state/paper.json'
+              with urlopen(state_url, timeout=20) as response:
+                  state = json.load(response)
+              names = ['TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','BINANCE_API_KEY','BINANCE_API_SECRET']
+              config = {name: os.environ[name] for name in names}
+              if any(not value.strip() for value in config.values()):
+                  raise ValueError('Missing required secret')
+              request = Request(base+'/functions/v1/import-bot-secrets', method='POST',
+                  headers={'Authorization':'Bearer '+os.environ['SUPABASE_PUBLIC_ANON_KEY'],
+                      'X-GitHub-Token':identity,'x-region':'sa-east-1','Content-Type':'application/json'},
+                  data=json.dumps({'config':config,'state':state}).encode())
+              with urlopen(request, timeout=45) as response:
+                  result=json.load(response)
+              if result.get('status') != 'imported':
+                  raise ValueError('Import not confirmed')
+              print('Importacion confirmada: 4 secretos cifrados y cartera ficticia conservada.')
+          except (HTTPError, URLError, ValueError, KeyError):
+              print('Importacion no confirmada; revisar el servidor. No se imprimen credenciales.')
+              sys.exit(1)
+          PY

@@ -1,0 +1,238 @@
+// Account access is GET-only. Paper trades never touch Binance order endpoints.
+const PUBLIC = 'https://data-api.binance.vision';
+const PRIVATE = 'https://api.binance.com';
+const CORE: Record<string, number> = { BTCUSDT: 40, ETHUSDT: 25, SOLUSDT: 15 };
+const WATCH = ['BNBUSDT', 'XRPUSDT', 'LINKUSDT', 'ADAUSDT'];
+const MEMES = ['DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'FLOKIUSDT'];
+const STABLES = new Set(['USDC','FDUSD','TUSD','USDP','DAI','EUR','TRY','BRL']);
+const FEE = 0.001;
+type Candle = { id: number; high: number; low: number; close: number; volume: number };
+type Analysis = { symbol: string; price: number; change: number; change_15m: number;
+  volume_24h: number; rsi: number; histogram: number; volume_ratio: number; atr: number;
+  support: number; resistance: number; trend: string; candle_id: number };
+type Position = { quantity: number; entry: number; cost: number; stop: number; target: number };
+type State = { version: number; cash: number; positions: Record<string, Position>;
+  trades: Record<string, unknown>[]; last_candle: Record<string, number>; status: string };
+type Config = Record<string,string>;
+type Context = { market_change?: number; fear_greed?: number };
+class HttpFailure extends Error { status:number; constructor(status:number) { super('HTTP request failed'); this.status=status; } }
+async function json(url: string, options: RequestInit = {}) {
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(14000) });
+  if (!response.ok) { await response.body?.cancel(); throw new HttpFailure(response.status); }
+  return await response.json();
+}
+async function rpc(name: string, args: Record<string,unknown>) {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  return json(Deno.env.get('SUPABASE_URL')! + '/rest/v1/rpc/' + name, {
+    method: 'POST', headers: { apikey: key, Authorization: 'Bearer '+key, 'Content-Type':'application/json' },
+    body: JSON.stringify(args),
+  });
+}
+async function candles(symbol: string, interval: string, count: number): Promise<Candle[]> {
+  const rows = await json(PUBLIC + '/api/v3/klines?' + new URLSearchParams({symbol,interval,limit:String(count+1)}));
+  const closed = rows.filter((r: (string|number)[]) => Number(r[6]) < Date.now()).slice(-count);
+  if (closed.length < count-1) throw new Error('Insufficient closed candles');
+  return closed.map((r:(string|number)[]) => ({id:Number(r[0]),high:Number(r[2]),low:Number(r[3]),close:Number(r[4]),volume:Number(r[7])}));
+}
+export function ema(values: number[], period: number): number[] {
+  const result = [values[0]], k = 2/(period+1);
+  for (const v of values.slice(1)) result.push(v*k+result.at(-1)!*(1-k));
+  return result;
+}
+export function rsi(values: number[], period=14): number {
+  const changes = values.slice(1).map((v,i)=>v-values[i]);
+  const gains=changes.map(v=>Math.max(v,0)), losses=changes.map(v=>Math.max(-v,0));
+  let gain=gains.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  let loss=losses.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  for(let i=period;i<changes.length;i++) { gain=(gain*(period-1)+gains[i])/period; loss=(loss*(period-1)+losses[i])/period; }
+  return loss ? 100-100/(1+gain/loss) : gain ? 100 : 50;
+}
+async function analyze(symbol:string, ticker:Record<string,string>):Promise<Analysis> {
+  const [four,days,quarter]=await Promise.all([candles(symbol,'4h',80),candles(symbol,'1d',60),candles(symbol,'15m',3)]);
+  const closes=four.map(c=>c.close), daily=days.map(c=>c.close), volumes=four.map(c=>c.volume);
+  const fast=ema(closes,12), slow=ema(closes,26), line=fast.map((v,i)=>v-slow[i]);
+  const ranges=four.slice(1).map((c,i)=>Math.max(c.high-c.low,Math.abs(c.high-four[i].close),Math.abs(c.low-four[i].close)));
+  const avg=(v:number[])=>v.reduce((a,b)=>a+b,0)/v.length;
+  const up=closes.at(-1)!>avg(closes.slice(-20)) && daily.at(-1)!>avg(daily.slice(-50));
+  const down=closes.at(-1)!<avg(closes.slice(-20)) && daily.at(-1)!<avg(daily.slice(-50));
+  return {symbol,price:Number(ticker.lastPrice),change:Number(ticker.priceChangePercent),
+    change_15m:(quarter.at(-1)!.close/quarter.at(-2)!.close-1)*100,
+    volume_24h:Number(ticker.quoteVolume),rsi:rsi(closes),histogram:line.at(-1)!-ema(line,9).at(-1)!,
+    volume_ratio:avg(volumes.slice(-21,-1)) ? volumes.at(-1)!/avg(volumes.slice(-21,-1)):0,
+    atr:avg(ranges.slice(-14)),support:Math.min(...four.slice(-20).map(c=>c.low)),
+    resistance:Math.max(...four.slice(-20).map(c=>c.high)),trend:up?'alcista':down?'bajista':'mixta',candle_id:four.at(-1)!.id};
+}
+export function candidate(i:Analysis,meme=false):boolean {
+  return i.trend==='alcista'&&i.rsi>=45&&i.rsi<=65&&i.histogram>0&&i.volume_ratio>=(meme?1.5:1.1)
+    &&(!meme||(i.volume_24h>=10000000&&Math.abs(i.change)<=20));
+}
+async function market():Promise<Record<string,Analysis>> {
+  const tickers=await json(PUBLIC+'/api/v3/ticker/24hr');
+  const bySymbol:Record<string,Record<string,string>>=Object.fromEntries(tickers.map((t:Record<string,string>)=>[t.symbol,t]));
+  const ranked=tickers.filter((t:Record<string,string>)=>{
+    const base=t.symbol.slice(0,-4),volume=Number(t.quoteVolume),change=Number(t.priceChangePercent);
+    return t.symbol.endsWith('USDT')&&!(t.symbol in CORE)&&!MEMES.includes(t.symbol)&&!STABLES.has(base)
+      &&/^[A-Z]+$/.test(base)&&!/(UP|DOWN|BULL|BEAR)$/.test(base)&&volume>=30000000&&change>=2&&change<=15;
+  }).sort((a:Record<string,string>,b:Record<string,string>)=>Number(b.quoteVolume)-Number(a.quoteVolume)).slice(0,6);
+  const symbols=[...new Set([...Object.keys(CORE),...WATCH,...ranked.map((t:Record<string,string>)=>t.symbol),...MEMES])];
+  const result:Record<string,Analysis>={};
+  // Bounded concurrency and at most 51 kline requests per quarter hour.
+  for(let offset=0;offset<symbols.length;offset+=4) {
+    await Promise.all(symbols.slice(offset,offset+4).map(async symbol=>{
+      try { if(!bySymbol[symbol]) throw new Error('Missing ticker'); result[symbol]=await analyze(symbol,bySymbol[symbol]); }
+      catch { if(symbol in CORE) throw new Error('Missing core data: '+symbol); }
+    }));
+  }
+  return result;
+}
+async function context():Promise<Context> {
+  const result:Context={};
+  await Promise.all([
+    (async()=>{try {const d=await json('https://api.coingecko.com/api/v3/global');result.market_change=Number(d.data.market_cap_change_percentage_24h_usd);}catch{/* optional */}})(),
+    (async()=>{try {const d=await json('https://api.alternative.me/fng/?limit=1');result.fear_greed=Number(d.data[0].value);}catch{/* optional */}})(),
+  ]);
+  return result;
+}
+const escape=(s:unknown)=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const decode=(s:string)=>s.replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/,'$1').replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n))).replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+async function headline():Promise<{title:string;url:string}|null> {
+  try {
+    const response=await fetch('https://www.criptonoticias.com/feed/',{signal:AbortSignal.timeout(12000)});
+    if(!response.ok) return null;
+    const xml=await response.text();
+    for(const item of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+      const title=decode(item[1].match(/<title>([\s\S]*?)<\/title>/)?.[1]?.trim()??'');
+      const url=decode(item[1].match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim()??'');
+      const date=Date.parse(item[1].match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]??'');
+      if(Number.isFinite(date)&&Date.now()-date<48*3600000&&date<=Date.now()+300000
+        &&/^https:\/\/www\.criptonoticias\.com\//.test(url)&&/(precio|mercado|demanda|sube|cae|caída|tasas|inflación|etf|volatilidad|rally)/i.test(title))
+        return {title:title.slice(0,100),url};
+    }
+  } catch {/* optional feed */}
+  return null;
+}
+export const price=(v:number)=>new Intl.NumberFormat('es-ES',{useGrouping:true,minimumFractionDigits:v>=1?2:0,maximumFractionDigits:v<0.01?8:v<1?5:2}).format(v);
+const percent=(v:number,digits=1)=>(v>=0?'+':'')+v.toFixed(digits).replace('.',',')+' %';
+export function equity(state:State,a:Record<string,Analysis>):number {
+  return state.cash+Object.entries(state.positions).reduce((sum,[s,p])=>sum+p.quantity*a[s].price,0);
+}
+export function updatePaper(state:State,a:Record<string,Analysis>,stamp:string):string[] {
+  const events:string[]=[];
+  for(const [symbol,p] of Object.entries(state.positions)) {
+    const i=a[symbol]; if(!i) throw new Error('Missing held asset');
+    const reason=i.price<=p.stop?'salida por pérdida':i.price>=p.target?'objetivo':i.trend==='bajista'&&i.histogram<0?'tendencia deteriorada':null;
+    if(reason) {
+      const gross=p.quantity*i.price,fee=gross*FEE,pnl=gross-fee-p.cost;
+      state.cash+=gross-fee; delete state.positions[symbol];state.last_candle[symbol]=i.candle_id;
+      state.trades.push({time:stamp,side:'SELL',symbol,price:i.price,quantity:p.quantity,fee,pnl,reason});
+      events.push(`Venta de prueba de ${symbol.slice(0,-4)}: resultado ${percent(pnl,2).replace(' %','')} USDT (${reason}).`);
+    }
+  }
+  const value=equity(state,a);
+  if(value<=85&&state.status!=='halted'){state.status='halted';events.push('Prueba detenida al bajar a 85 USDT o menos.');}
+  else if(value<=95&&state.status==='active'){state.status='paused';events.push('Nuevas compras de prueba pausadas al bajar a 95 USDT o menos.');}
+  if(state.status==='active') for(const symbol of Object.keys(CORE)) {
+    const i=a[symbol];
+    if(state.positions[symbol]||!candidate(i)||state.last_candle[symbol]===i.candle_id) continue;
+    state.last_candle[symbol]=i.candle_id;
+    const stop=Math.max(i.support*0.995,i.price-2*i.atr);
+    if(stop>=i.price||(i.price-stop)/i.price>0.12) continue;
+    const budget=Math.min(CORE[symbol]/2,Math.max(0,state.cash-20),i.price/(i.price-stop));
+    if(budget<5) continue;
+    const quantity=budget/(i.price*(1+FEE)),cost=quantity*i.price*(1+FEE),target=i.price+2*(i.price-stop);
+    state.cash-=cost;state.positions[symbol]={quantity,entry:i.price,cost,stop,target};
+    state.trades.push({time:stamp,side:'BUY',symbol,price:i.price,quantity,fee:quantity*i.price*FEE});
+    events.push(`Compra de prueba de ${symbol.slice(0,-4)} por ${price(budget)} USDT. Salida por pérdida: ${price(stop)}; objetivo: ${price(target)}.`);
+  }
+  state.trades=state.trades.slice(-200);
+  return events;
+}
+async function account(config:Config):Promise<{text:string;ok:boolean}> {
+  if(!config.BINANCE_API_KEY||!config.BINANCE_API_SECRET) return {ok:false,text:'Binance todavía no está conectado.'};
+  try {
+    const clock=await json(PRIVATE+'/api/v3/time');
+    const query=new URLSearchParams({timestamp:String(clock.serverTime),recvWindow:'5000'}).toString();
+    const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(config.BINANCE_API_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+    const signed=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(query));
+    const signature=Array.from(new Uint8Array(signed)).map(v=>v.toString(16).padStart(2,'0')).join('');
+    const d=await json(PRIVATE+'/api/v3/account?'+query+'&signature='+signature,{headers:{'X-MBX-APIKEY':config.BINANCE_API_KEY}});
+    const balances=d.balances.map((b:Record<string,string>)=>({asset:b.asset,amount:Number(b.free)+Number(b.locked)})).filter((b:{amount:number})=>b.amount>0);
+    if(!balances.length) return {ok:true,text:'Binance conectado en solo lectura. Tu cuenta Spot no muestra saldos positivos.'};
+    const tickers=await json(PUBLIC+'/api/v3/ticker/price');
+    const prices:Record<string,number>=Object.fromEntries(tickers.map((t:Record<string,string>)=>[t.symbol,Number(t.price)]));
+    const valued=balances.map((b:{asset:string;amount:number})=>({...b,value:b.amount*(b.asset==='USDT'?1:(prices[b.asset+'USDT']??NaN))}));
+    const known=valued.filter((b:{value:number})=>Number.isFinite(b.value)).sort((a:{value:number},b:{value:number})=>b.value-a.value);
+    const total=known.reduce((sum:number,b:{value:number})=>sum+b.value,0);
+    let text=`Binance Spot · solo lectura\nValor estimado: ${price(total)} USDT.\n`;
+    text+=known.slice(0,5).map((b:{asset:string;value:number})=>`• ${b.asset}: ${price(b.value)} USDT`).join('\n');
+    if(total&&known.length) text+=`\nMayor posición: ${known[0].asset} (${Math.round(known[0].value/total*100)} %).`;
+    if(valued.length!==known.length) text+='\nHay activos sin precio USDT; no están incluidos en el total.';
+    return {ok:true,text:text+'\nNo incluye Futures ni Earn. La ganancia real necesita tu historial de compras.'};
+  } catch(e) {
+    return {ok:false,text:e instanceof HttpFailure&&e.status===451?'Binance no permite consultar la cuenta desde este servidor.':`No se pudo leer Binance (${e instanceof HttpFailure?e.status:'conexión'}). El análisis público sigue activo.`};
+  }
+}
+export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;url:string}|null,state:State,accountText:string,events:string[],now=new Date()):string {
+  const items=Object.values(a),rising=items.filter(i=>i.change>0).length;
+  const mood=ctx.market_change!==undefined&&ctx.market_change>1&&rising/items.length>=0.6?'🟢 Mayormente alcista':ctx.market_change!==undefined&&ctx.market_change< -1&&rising/items.length<=0.4?'🔴 Mayormente bajista':'🟡 Mercado mixto';
+  const time=new Intl.DateTimeFormat('es-ES',{timeZone:'Europe/Madrid',hour:'2-digit',minute:'2-digit'}).format(now);
+  const lines=[`📊 <b>Mercado · ${time} (España)</b>`,mood];
+  if(ctx.market_change!==undefined) lines.push(`Cripto en 24 h: ${percent(ctx.market_change)} (CoinGecko).`);
+  lines.push(`${rising} de ${items.length} monedas observadas subieron en 24 h; es una muestra.`);
+  if(ctx.fear_greed!==undefined)lines.push(`Ánimo: ${ctx.fear_greed}/100 (índice diario de Alternative.me).`);
+  lines.push('\n<b>Bitcoin, Ethereum y Solana</b>');
+  for(const symbol of Object.keys(CORE)){
+    const i=a[symbol];
+    lines.push(`• <b>${symbol.slice(0,-4)}</b>: ${price(i.price)} USDT`, `  15 min: ${percent(i.change_15m,2)} · 24 h: ${percent(i.change)}`);
+    lines.push(candidate(i)?'  🟢 Cumple filtros para estudiar una entrada.':i.trend==='bajista'||i.rsi>=75?'  🔴 Riesgo elevado; esperaría.':'  🟡 Sin señal clara; esperaría.');
+  }
+  const others=items.filter(i=>!(i.symbol in CORE)&&!MEMES.includes(i.symbol));
+  const picks=others.filter(i=>candidate(i)).sort((a,b)=>b.volume_24h-a.volume_24h).slice(0,2);
+  const radar=others.filter(i=>i.volume_24h>=30000000).sort((a,b)=>b.change-a.change).slice(0,2);
+  lines.push('\n🔎 <b>Otras criptos</b>',picks.length?'Cumplen filtros: '+picks.map(i=>i.symbol.slice(0,-4)).join(', ')+'.':radar.length?'En observación, sin señal: '+radar.map(i=>i.symbol.slice(0,-4)+' '+percent(i.change)).join(', ')+'.':'Sin candidatos líquidos con señal clara.');
+  const memes=items.filter(i=>MEMES.includes(i.symbol)),mp=memes.filter(i=>candidate(i,true));
+  lines.push('🐸 <b>Memecoins</b>',mp.length?'Señal experimental: '+mp.slice(0,2).map(i=>i.symbol.slice(0,-4)).join(', ')+'.':'En observación, sin señal: '+memes.sort((a,b)=>b.volume_24h-a.volume_24h).slice(0,2).map(i=>i.symbol.slice(0,-4)+' '+percent(i.change)).join(', ')+'.');
+  lines.push('Riesgo alto. El bot no comprueba contratos ni concentración de tenedores.');
+  const btc=a.BTCUSDT;
+  lines.push('\n🧭 <b>Qué vigilar en BTC</b>',`Si supera y sostiene ${price(btc.resistance)} USDT con volumen, podría mejorar.`,`Si pierde ${price(btc.support)} USDT, aumenta el riesgo de caída.`);
+  const status:Record<string,string>={active:'activa',paused:'pausada',halted:'detenida'};
+  lines.push('\n🧪 <b>Cartera de prueba · 100 USDT iniciales</b>',`Valor: ${price(equity(state,a))} USDT. Estado: ${status[state.status]}.`,`Posiciones: ${Object.keys(state.positions).map(s=>s.slice(0,-4)).join(', ')||'ninguna'}.`,...events.map(escape));
+  lines.push('\n🏦 <b>Tu cuenta</b>',escape(accountText));
+  if(news)lines.push(`\n📰 <a href="${escape(news.url)}">${escape(news.title)}</a> (CriptoNoticias).`);
+  lines.push('\n<i>Datos públicos de Binance. Análisis orientativo y operaciones ficticias; no hay compras reales.</i>');
+  return lines.join('\n');
+}
+async function telegram(config:Config,text:string){
+  if(text.length>4000)throw new Error('Report too long');
+  const d=await json('https://api.telegram.org/bot'+config.TELEGRAM_BOT_TOKEN+'/sendMessage',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:config.TELEGRAM_CHAT_ID,text,parse_mode:'HTML',disable_web_page_preview:true}),
+  });
+  if(!d.ok) throw new Error('Telegram rejected report');
+}
+Deno.serve(async(req:Request)=>{
+  // Gateway JWT validation stays enabled; anon and user JWTs cannot execute this bot.
+  const service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if(!service||req.headers.get('Authorization')!=='Bearer '+service)return Response.json({error:'unauthorized'},{status:401});
+  if(req.method!=='POST')return Response.json({error:'POST required'},{status:405});
+  if(Deno.env.get('SB_REGION')!=='sa-east-1')return Response.json({error:'wrong region'},{status:503});
+  try {
+    const slot=Math.floor(Date.now()/900000),job=await rpc('bot_claim',{p_slot:slot});
+    if(!job)return Response.json({status:'skipped'});
+    let text=job.report,accountOk:null|boolean=null;
+    if(!text){
+      const [analyses,ctx,news,acc]=await Promise.all([market(),context(),headline(),account(job.config)]);
+      const events=updatePaper(job.state,analyses,new Date().toISOString());
+      text=report(analyses,ctx,news,job.state,acc.text,events);accountOk=acc.ok;
+      if(text.length>4000)throw new Error('Report too long');
+      if(!await rpc('bot_stage',{p_lease:job.lease,p_slot:job.slot,p_state:job.state,p_report:text}))throw new Error('Lease expired');
+    }
+    await telegram(job.config,text);
+    if(!await rpc('bot_ack',{p_lease:job.lease}))throw new Error('Acknowledgement failed');
+    console.log(JSON.stringify({event:'report_sent',slot:job.slot,account_ok:accountOk}));
+    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk});
+  }catch(e){
+    // Never log request URLs, response payloads, credentials or private account data.
+    console.error(JSON.stringify({event:'bot_error',kind:e instanceof HttpFailure?'http_'+e.status:'processing'}));
+    return Response.json({error:'bot_failed'},{status:500});
+  }
+});

@@ -18,3 +18,34 @@ antes de desactivar la programacion anterior. No habilitar operaciones reales.
 
 El plan Free tiene cuotas y puede pausarse por baja actividad; no ofrece una
 garantia de disponibilidad. No se activa ningun plan de pago.
+
+## Servidor preparado
+
+Proyecto: `qqdyagzvjshhiiqkzfat`, region `sa-east-1`.
+La prueba regional de ambos endpoints devolvio HTTP 200 el 23-10-2026.
+
+`market-bot` conserva el analisis y el estado de la simulacion original. Solo
+acepta el JWT de servicio del proyecto y rechaza otra region. La tabla tiene
+RLS, y sus cuatro RPC solo se pueden ejecutar como `service_role`. Las claves
+se guardan cifradas en Vault; no se publican saldos ni credenciales en GitHub.
+Un bloqueo evita ejecuciones simultaneas. Un informe pendiente se reintenta
+sin aplicar dos veces las operaciones ficticias. Telegram no ofrece clave
+de idempotencia para sendMessage: un fallo entre envio y confirmacion podria
+duplicar ese mensaje, pero no las operaciones ficticias.
+
+El traslado de las cuatro credenciales existentes se prepara como un workflow
+manual, sin PAT adicional. `import-bot-secrets` valida la firma OIDC de GitHub,
+audiencia, repositorio inmutable, actor, archivo de workflow, rama, evento
+manual y SHA exacto. Al desplegar se sustituyen `__MIGRATION_SHA__` y
+`__IMPORT_DEADLINE__` (ventana corta). No ejecutar antes de la autorizacion
+del propietario para copiar las credenciales de GitHub a este proyecto.
+La importacion es atomica y se cierra al primer exito. La clave `anon`
+del workflow es publica y no permite leer el estado ni las credenciales.
+
+Orden de puesta en marcha: migracion SQL, despliegue, autorizacion del
+traslado, workflow manual, prueba del informe con cuenta, desactivar el
+schedule anterior de GitHub, ejecutar `schedule.sql`. Comprobar cron y un
+envio automatico antes de considerar finalizada la migracion.
+
+Pruebas locales: `node tests/test_edge.mjs` comprueba riesgo, stops,
+duplicados de vela, pausas, escape HTML, longitud, autorizacion y region.
