@@ -1,6 +1,6 @@
 # Binance Trading Bot
 
-Bot de **analisis y simulacion**. Consulta datos publicos de Binance, revisa BTC,
+Bot de **analisis y simulacion**. Cruza datos publicos de varias fuentes, revisa BTC,
 ETH, SOL, altcoins liquidas y una lista corta de memecoins, y envia un informe
 por Telegram desde un servidor gratuito de Supabase. **No compra, vende, transfiere
 ni retira activos reales.**
@@ -12,6 +12,10 @@ se fija en Sao Paulo (`sa-east-1`), donde se verifico la consulta de cuenta.
 El envio llega despues del procesamiento. El plan Free tiene cuotas y no
 garantiza disponibilidad; no se activa ningun plan de pago. GitHub Actions
 queda solo como alternativa manual y ya no tiene horario automatico.
+Los horarios de los mensajes se muestran en **Uruguay** (`America/Montevideo`),
+segun la ubicacion indicada por el propietario. El cron conserva su frecuencia
+de 15 minutos; la region de alojamiento sigue siendo Sao Paulo.
+
 Cada informe muestra:
 
 - cambios de BTC/ETH/SOL en la ultima vela cerrada de 15 minutos y en 24 horas;
@@ -19,15 +23,41 @@ Cada informe muestra:
   soportes y resistencias;
 - contexto global de CoinGecko; indice Miedo/Codicia diario
   de Alternative.me; un titular de mercado reciente de CriptoNoticias;
+- contraste de precios de Binance con CoinMarketCap (BTC/ETH/SOL) y CoinGecko
+  (activos conocidos), comprobando identidad, antiguedad y conversion USD/USDT;
+- volumen agregado de DEX de DefiLlama y una muestra de hasta ocho perfiles
+  recientes de DEX Screener, con hasta dos resultados para observacion;
 - un radar de altcoins liquidas y memecoins, distinguiendo candidatos que
   cumplen filtros de las monedas que solo merecen observacion;
 - cartera ficticia, operaciones simuladas, y, si se configura, un resumen
-  **de solo lectura** de los saldos Spot reales.
+  **de solo lectura** de los saldos Spot reales: cantidades, valores estimados
+  y concentracion de la mayor posicion. Muestra las cinco posiciones mayores.
+
+CoinMarketCap y CoinGecko se consultan con sus interfaces publicas sin clave;
+no se conecta la cuenta de Binance al portafolio de CoinMarketCap ni se le
+envian saldos privados. Las entradas ficticias nuevas exigen al menos una
+fuente externa reciente (hasta 15 minutos), diferencia de precio no mayor
+al 2% con ninguna fuente disponible, y USDT dentro del 1% del dolar. Este
+contraste valida coherencia del precio, no predice rentabilidad. Las monedas
+sin identificador conocido quedan solo en observacion.
+
+DefiLlama y DEX Screener se actualizan como maximo una vez por hora y el
+mensaje indica la antiguedad de la consulta. El radar DEX requiere al menos
+1 millon USD de liquidez y volumen diario, siete dias de antiguedad del pool,
+capitalizacion positiva y una relacion FDV/liquidez no superior a 50. Es una
+muestra de perfiles, no un rastreo completo del mercado ni una auditoria;
+no produce compras ficticias ni reales. Volumen DEX no equivale a entrada
+neta de capital. Los limites publicos de los proveedores pueden interrumpir
+algunas secciones; el mensaje muestra su disponibilidad.
 
 El radar de memecoins no comprueba distribucion de tenedores, contratos ni
 riesgo de manipulacion. Los titulares no prueban la causa de un movimiento.
 Si un proveedor opcional falla, su seccion se omite; si faltan datos de
 BTC/ETH/SOL, la ejecucion falla para no mandar un analisis incompleto.
+
+La funcion acepta `{"action":"diagnostics"}` con la misma autenticacion de
+servicio para verificar fuentes publicas, horario y longitud del informe. Ese
+diagnostico no consulta la cuenta, no envia Telegram ni modifica la simulacion.
 
 ## Simulacion
 

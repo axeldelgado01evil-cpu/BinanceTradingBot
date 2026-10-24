@@ -358,8 +358,8 @@ def build_report(analyses, context, news, state, account, now, events):
     else:
         icon, mood = "🟡", "Mixto; conviene esperar confirmaciones"
     try:
-        local_time = now.astimezone(ZoneInfo("Europe/Madrid"))
-        clock_label = "hora de España"
+        local_time = now.astimezone(ZoneInfo("America/Montevideo"))
+        clock_label = "hora de Uruguay"
     except ZoneInfoNotFoundError:
         local_time = now
         clock_label = "UTC"
