@@ -421,18 +421,12 @@ def build_report(analyses, context, news, state, account, now, events):
         lines.append(f"Si BTC supera {format_price(resistance)} USDT con volumen, podría mejorar.")
     lines.append(f"Si pierde {format_price(support)} USDT, aumenta el riesgo de caída.")
 
-    prices = {symbol: item["price"] for symbol, item in analyses.items()}
-    held = ", ".join(symbol[:-4] for symbol in state["positions"]) or "ninguna"
-    state_label = {"active": "activa", "paused": "pausada", "halted": "detenida"}[state["status"]]
-    lines.append("\n🧪 <b>Prueba con 100 USDT ficticios</b>")
-    lines.append(f"Valor actual: {format_price(equity(state, prices))} USDT. Posiciones: {held}. Estado: {state_label}.")
-    lines.extend(html.escape(event) for event in events)
     lines.append("\n🏦 " + html.escape(account))
     if news:
         title, url = news[0]
         lines.append(f'📰 <b>Noticia para leer</b>: <a href="{html.escape(url, quote=True)}">'
                      f'{html.escape(title)}</a> (CriptoNoticias).')
-    lines.append("\n<i>Solo análisis y operaciones de prueba. No se ejecutan compras reales. "
+    lines.append("\n<i>Cuenta de solo lectura. No se ejecutan compras ni ventas reales. "
                  "GitHub puede retrasar algún informe.</i>")
     return "\n".join(lines)
 

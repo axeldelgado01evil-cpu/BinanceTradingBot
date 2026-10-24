@@ -314,12 +314,10 @@ export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;
   }
   const btc=a.BTCUSDT;
   lines.push('\n🧭 <b>Qué vigilar en BTC</b>',`Si supera y sostiene ${price(btc.resistance)} USDT con volumen, podría mejorar.`,`Si pierde ${price(btc.support)} USDT, aumenta el riesgo de caída.`);
-  const status:Record<string,string>={active:'activa',paused:'pausada',halted:'detenida'};
-  lines.push('\n🧪 <b>Cartera de prueba · 100 USDT iniciales</b>',`Valor: ${price(equity(state,a))} USDT. Estado: ${status[state.status]}.`,`Posiciones: ${Object.keys(state.positions).map(s=>s.slice(0,-4)).join(', ')||'ninguna'}.`,...events.map(escape));
   lines.push('\n🏦 <b>Tu cuenta</b>',escape(accountText));
   const newsLine=news?`\n📰 <a href="${escape(news.url)}">${escape(news.title)}</a> (CriptoNoticias).`:'';
   if(newsLine&&lines.join('\n').length+newsLine.length<3650)lines.push(newsLine);
-  lines.push('\n<i>Análisis orientativo con varias fuentes y operaciones ficticias; no hay compras reales.</i>');
+  lines.push('\n<i>Análisis orientativo con varias fuentes. El bot consulta tu cuenta en solo lectura; no ejecuta compras ni ventas reales.</i>');
   return lines.join('\n');
 }
 async function telegram(config:Config,text:string){

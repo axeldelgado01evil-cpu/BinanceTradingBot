@@ -29,7 +29,7 @@ Cada informe muestra:
   recientes de DEX Screener, con hasta dos resultados para observacion;
 - un radar de altcoins liquidas y memecoins, distinguiendo candidatos que
   cumplen filtros de las monedas que solo merecen observacion;
-- cartera ficticia, operaciones simuladas, y, si se configura, un resumen
+- si se configura, un resumen
   **de solo lectura** de los saldos Spot reales: cantidades, valores estimados
   y concentracion de la mayor posicion. Muestra las cinco posiciones mayores.
 
@@ -60,6 +60,10 @@ servicio para verificar fuentes publicas, horario y longitud del informe. Ese
 diagnostico no consulta la cuenta, no envia Telegram ni modifica la simulacion.
 
 ## Simulacion
+
+Por preferencia del propietario, la cartera ficticia y sus eventos no aparecen
+en Telegram. La simulacion interna se conserva separada de los saldos reales;
+ocultarla del mensaje no activa operaciones con dinero real.
 
 Comienza con 100 USDT ficticios. Asignaciones maximas objetivo: BTC 40,
 ETH 25, SOL 15 y reserva 20. Una entrada ficticia usa como maximo la mitad de

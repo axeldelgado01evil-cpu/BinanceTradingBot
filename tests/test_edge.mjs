@@ -36,6 +36,8 @@ const text=bot.report(a,{market_change:2,fear_greed:60},{title:'Mercado <falso> 
 assert.ok(text.length<4000,`Telegram report length: ${text.length}`);
 assert.ok(text.includes('09:00 (Uruguay)'));
 assert.ok(text.includes('&lt;prueba&gt;'));
+assert.ok(!text.includes('Cartera de prueba'));
+assert.ok(!text.includes('Compra de prueba: salida por pérdida'));
 assert.ok(text.includes('&lt;falso&gt; &amp; noticia'));
 assert.ok(!source.includes('/api/v3/order'));
 const now=Date.now(),quote=(usd,age=0)=>({usd,updated:now-age});
