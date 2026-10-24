@@ -73,6 +73,47 @@ const worstContext={sources:{CMC:'no disponible',CoinGecko:'datos antiguos',Defi
   defi:{volume:12345678900,change:-20,checked:now},dex:{scanned:8,checked:now,qualified:Array(2).fill({symbol:'A'.repeat(15),chain:'solana',url:'https://dexscreener.com/solana/'+'A'.repeat(88),liquidity:123456789})}};
 const worst=bot.report(check,worstContext,null,afterEntry,'Cuenta Spot\n'+Array(5).fill('• SHIB: ≈123456789,123456 (≈123456789,12 USDT)').join('\n'),Array(3).fill('Compra de prueba de BTC por 100 USDT. Salida por pérdida: 123456; objetivo: 123456.'));
 assert.ok(worst.length<4000,`Worst-case report length: ${worst.length}`);
+assert.ok(bot.report(check,{...worstContext,ai:'A'.repeat(500)},null,afterEntry,'Cuenta Spot\n'+Array(5).fill('• SHIB: ≈123456789,123456 (≈123456789,12 USDT)').join('\n')+'\nCambio desde lectura anterior: +100,00 USDT.',[]).length<4000);
+const snapshot=bot.publicSnapshot(a,{sources:{CMC:'ok',CoinGecko:'ok'}},now);
+assert.deepEqual(snapshot.assets.slice(0,3).map(x=>x.asset),['BTC','ETH','SOL']);
+assert.ok(snapshot.assets.some(x=>x.asset==='DOGE'));assert.ok(snapshot.assets.length<=7);
+assert.ok(!JSON.stringify(snapshot).includes('quantity'));
+assert.equal(bot.safeQuestion('Mi clave privada es abc'),false);
+assert.equal(bot.safeQuestion('gsk_'+'A'.repeat(40)),false);
+const owner={TELEGRAM_CHAT_ID:'123'};
+const update={update_id:10,message:{chat:{id:123,type:'private'},from:{id:123,is_bot:false},date:Math.floor(now/1000),text:'Qué pasa con BTC?'}};
+assert.ok(bot.ownerUpdate(update,owner,now-5000,now));
+assert.equal(bot.ownerUpdate({...update,message:{...update.message,from:{id:321}}},owner,now-5000,now),false);
+assert.equal(bot.ownerUpdate({...update,message:{...update.message,chat:{id:123,type:'group'}}},owner,now-5000,now),false);
+assert.equal(bot.ownerUpdate(update,owner,now+5000,now),false);
+env.set('GROQ_ENABLED','true');env.set('GROQ_API_KEY','test-groq-key');env.set('SUPABASE_URL','https://db.test');
+const aiCalls=[];
+globalThis.fetch=async(url,options)=>{aiCalls.push({url,options});return Response.json(String(url).startsWith('https://db.test')?true:{choices:[{finish_reason:'stop',message:{content:'BTC muestra un mercado mixto.'}}]});};
+assert.equal(await bot.explain(snapshot,'Qué pasa con BTC?','chat'),'BTC muestra un mercado mixto.');
+assert.equal(aiCalls.length,2);
+const sent=JSON.parse(aiCalls[1].options.body);
+assert.equal(sent.model,'qwen/qwen3.8-27b');assert.equal(sent.reasoning_effort,'none');
+assert.ok(!sent.messages[1].content.includes('account_snapshot'));
+assert.equal(await bot.explain({...snapshot,at:now-1800001},'BTC?','chat'),null);
+assert.equal(aiCalls.length,2,'stale data must not be sent to AI');
+globalThis.fetch=async(url)=>{assert.ok(String(url).startsWith('https://db.test'));return Response.json(false);};
+assert.equal(await bot.explain(snapshot,'BTC?','chat'),null,'quota exhaustion must fall back without calling AI');
+let replyPayload,finished;
+const job={lease:'test-lease',offset:0,enabled_since:new Date(now-5000).toISOString(),snapshot,account_text:'PRIVATE_ACCOUNT_VALUE',config:{...owner,TELEGRAM_BOT_TOKEN:'test-token'}};
+globalThis.fetch=async(url,options)=>{
+  const body=JSON.parse(options.body);
+  if(String(url).includes('/rpc/bot_ai')){
+    if(body.p_action==='claim')return Response.json(job);
+    if(body.p_action==='finish'){finished=body.p_data;return Response.json(true);}
+    assert.fail('Account requests must not call AI or consume its quota');
+  }
+  if(String(url).endsWith('/getUpdates'))return Response.json({ok:true,result:[{...update,update_id:10,message:{...update.message,chat:{id:321,type:'private'},from:{id:321}}},{...update,update_id:11,message:{...update.message,text:'/cartera'}}]});
+  if(String(url).endsWith('/sendMessage')){replyPayload=body;return Response.json({ok:true});}
+  assert.fail('Unexpected destination: '+url);
+};
+const poll=await handler(new Request('https://example.test',{method:'POST',headers:{Authorization:'Bearer test-service-key','Content-Type':'application/json'},body:JSON.stringify({action:'assistant_poll'})}));
+assert.equal(poll.status,200);assert.equal((await poll.json()).replies,1);
+assert.equal(replyPayload.chat_id,'123');assert.equal(replyPayload.text,'PRIVATE_ACCOUNT_VALUE');assert.equal(finished.offset,12);
 let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('must not fetch');};
 const denied=await handler(new Request('https://example.test',{method:'POST',headers:{Authorization:'Bearer anon'}}));
 assert.equal(denied.status,401);assert.equal(calls,0);

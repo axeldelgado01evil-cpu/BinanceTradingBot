@@ -86,6 +86,40 @@ Supabase. Se conservo la cartera previa al trasladar el bot. El archivo publico
 `state/paper.json` conserva el estado anterior de GitHub y solo contiene
 operaciones **ficticias**, nunca claves o saldos reales.
 
+## IA opcional con Groq Free
+
+La integracion opcional usa `qwen/qwen3.8-27b` a traves de Groq, no la API de
+pago de OpenAI ni la suscripcion de ChatGPT. Requiere una cuenta Groq Free,
+una credencial privada `GROQ_API_KEY` en los secretos de la funcion, y
+`GROQ_ENABLED=true` despues de la autorizacion del propietario. No activa
+facturacion ni modifica permisos de Binance.
+
+El resumen de mercado y las preguntas usan solo una instantanea publica de
+BTC/ETH/SOL, hasta dos altcoins y dos memecoins de la muestra, sus indicadores
+y disponibilidad de fuentes. No se incluye el
+resumen privado de la cuenta en las peticiones al modelo. Las preguntas que
+el propietario escribe si se envian a Groq; no debe escribir informacion
+privada. Las consultas de saldo/cartera se responden localmente en el servidor.
+No se mantienen conversaciones anteriores ni se proporcionan herramientas al modelo.
+
+Limites internos: hasta 96 explicaciones programadas y 24 preguntas por dia
+UTC, entradas cortas y hasta 320 tokens de salida por consulta. Los limites
+reales del proveedor pueden variar y son compartidos por la cuenta; no se
+garantiza que toda consulta tenga respuesta de IA. Ante limite, error o datos
+de mas de 30 minutos, el informe normal continua sin generar una explicacion.
+
+Telegram se consulta cada minuto con el mismo acceso de servicio, sin abrir
+un webhook publico. Solo se responde al chat privado del propietario, se
+ignoran mensajes anteriores a la activacion o de mas de 10 minutos, y se
+procesan hasta dos respuestas por consulta. `/help` muestra ayuda y `/cartera`
+el ultimo resumen Spot (no consulta instantanea). La respuesta puede tardar
+cerca de un minuto. El desplazamiento se guarda tras cada lote; un fallo
+entre enviar y guardar puede duplicar una respuesta, nunca una operacion.
+
+Aplicar `supabase/migrations/202610240002_assistant.sql` y, una vez activada
+la credencial, `supabase/assistant-schedule.sql`. La IA explica datos; no
+predice beneficios, ejecuta operaciones ni acepta autorizaciones de trading.
+
 ## Conexion de Telegram y Binance
 
 Las cuatro credenciales del bot estan cifradas en Supabase Vault. Se importaron
