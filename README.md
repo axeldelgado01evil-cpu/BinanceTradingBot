@@ -33,6 +33,13 @@ Cada informe muestra:
   **de solo lectura** de los saldos Spot reales: cantidades, valores estimados
   y concentracion de la mayor posicion. Muestra las cinco posiciones mayores.
 
+Cuando dos lecturas Spot completas contienen las mismas cantidades, muestra
+el cambio de valor desde la lectura anterior. Si cambian las cantidades, avisa
+de posibles depositos, retiros u operaciones y no presenta esa variacion como
+rendimiento. No equivale a la ganancia desde la compra; no reconstruye operaciones
+que se compensen entre lecturas. El historial de lecturas permanece en la base
+privada de Supabase, separado del archivo publico de simulacion.
+
 CoinMarketCap y CoinGecko se consultan con sus interfaces publicas sin clave;
 no se conecta la cuenta de Binance al portafolio de CoinMarketCap ni se le
 envian saldos privados. Las entradas ficticias nuevas exigen al menos una

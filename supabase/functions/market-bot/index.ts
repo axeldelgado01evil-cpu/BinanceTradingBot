@@ -14,6 +14,7 @@ type Analysis = { symbol: string; price: number; change: number; change_15m: num
 type Position = { quantity: number; entry: number; cost: number; stop: number; target: number };
 type State = { version: number; cash: number; positions: Record<string, Position>;
   trades: Record<string, unknown>[]; last_candle: Record<string, number>; status: string;
+  account_snapshot?: {at:number;total:number;amounts:Record<string,number>;complete:boolean};
   external_cache?: Record<string,{at:number;value:unknown}> };
 type Config = Record<string,string>;
 type Quote = {usd:number;updated:number;change?:number};
@@ -253,7 +254,18 @@ export function updatePaper(state:State,a:Record<string,Analysis>,stamp:string):
   state.trades=state.trades.slice(-200);
   return events;
 }
-async function account(config:Config):Promise<{text:string;ok:boolean}> {
+export function trackAccount(state:State,amounts:Record<string,number>,total:number,complete:boolean,now=Date.now()):string {
+  const previous=state.account_snapshot;
+  state.account_snapshot={at:now,total,amounts,complete};
+  if(!previous||!complete||!previous.complete||previous.total<=0||now<=previous.at)return '';
+  const keys=Object.keys(amounts);
+  const same=keys.length===Object.keys(previous.amounts).length&&keys.every(k=>
+    previous.amounts[k]!==undefined&&Math.abs(amounts[k]-previous.amounts[k])<=Math.max(Math.abs(amounts[k]),1e-12)*1e-10);
+  if(!same)return '\nCambiaron las cantidades: puede haber depósitos, retiros u operaciones. No se calcula rendimiento entre estas lecturas.';
+  const change=total-previous.total,minutes=Math.max(1,Math.round((now-previous.at)/60000));
+  return `\nCambio de valor desde hace ${minutes} min: ${change>=0?'+':'−'}${price(Math.abs(change))} USDT (${percent(change/previous.total*100,2)}), con cantidades iguales. No es tu ganancia desde la compra.`;
+}
+async function account(config:Config,state:State):Promise<{text:string;ok:boolean}> {
   if(!config.BINANCE_API_KEY||!config.BINANCE_API_SECRET) return {ok:false,text:'Binance todavía no está conectado.'};
   try {
     const clock=await json(PRIVATE+'/api/v3/time');
@@ -263,7 +275,10 @@ async function account(config:Config):Promise<{text:string;ok:boolean}> {
     const signature=Array.from(new Uint8Array(signed)).map(v=>v.toString(16).padStart(2,'0')).join('');
     const d=await json(PRIVATE+'/api/v3/account?'+query+'&signature='+signature,{headers:{'X-MBX-APIKEY':config.BINANCE_API_KEY}});
     const balances=d.balances.map((b:Record<string,string>)=>({asset:b.asset,amount:Number(b.free)+Number(b.locked)})).filter((b:{amount:number})=>b.amount>0);
-    if(!balances.length) return {ok:true,text:'Binance conectado en solo lectura. Tu cuenta Spot no muestra saldos positivos.'};
+    if(!balances.length) {
+      state.account_snapshot={at:Date.now(),total:0,amounts:{},complete:true};
+      return {ok:true,text:'Binance conectado en solo lectura. Tu cuenta Spot no muestra saldos positivos.'};
+    }
     const tickers=await json(PUBLIC+'/api/v3/ticker/price');
     const prices:Record<string,number>=Object.fromEntries(tickers.map((t:Record<string,string>)=>[t.symbol,Number(t.price)]));
     const valued=balances.map((b:{asset:string;amount:number})=>({...b,value:b.amount*(b.asset==='USDT'?1:(prices[b.asset+'USDT']??NaN))}));
@@ -275,6 +290,7 @@ async function account(config:Config):Promise<{text:string;ok:boolean}> {
     if(known.length>5)text+='\nSe muestran las 5 posiciones de mayor valor.';
     if(total&&known.length) text+=`\nMayor posición: ${known[0].asset} (${Math.round(known[0].value/total*100)} %).`;
     if(valued.length!==known.length) text+='\nHay activos sin precio USDT; no están incluidos en el total.';
+    text+=trackAccount(state,Object.fromEntries(balances.map((b:{asset:string;amount:number})=>[b.asset,b.amount])),total,valued.length===known.length);
     return {ok:true,text:text+'\nNo incluye Futures ni Earn. La ganancia real necesita tu historial de compras.'};
   } catch(e) {
     return {ok:false,text:e instanceof HttpFailure&&e.status===451?'Binance no permite consultar la cuenta desde este servidor.':`No se pudo leer Binance (${e instanceof HttpFailure?e.status:'conexión'}). El análisis público sigue activo.`};
@@ -349,7 +365,7 @@ Deno.serve(async(req:Request)=>{
     if(!job)return Response.json({status:'skipped'});
     let text=job.report,accountOk:null|boolean=null;
     if(!text){
-      const [analyses,ctx,news,acc]=await Promise.all([market(),context(job.state),headline(),account(job.config)]);
+      const [analyses,ctx,news,acc]=await Promise.all([market(),context(job.state),headline(),account(job.config,job.state)]);
       crossCheck(analyses,ctx);
       const events=updatePaper(job.state,analyses,new Date().toISOString());
       text=report(analyses,ctx,news,job.state,acc.text,events);accountOk=acc.ok;
