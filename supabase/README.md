@@ -1,6 +1,20 @@
-# Prueba de alojamiento para la conexion de cuenta
+# Bot activo en el servidor gratuito
 
-El bot Python sigue funcionando en GitHub mientras se prepara la migracion.
+Migracion completada el 24-10-2026. La primera ejecucion automatica de las
+15:30 UTC (17:30 en Espana) devolvio HTTP 200, `status=sent` y
+`account_ok=true`. Binance Spot esta conectado en solo lectura y Telegram
+acepto el mensaje. El cron `market-bot-every-15-minutes` esta activo con
+`*/15 * * * *`; GitHub ya no tiene programacion automatica.
+
+Las cuatro credenciales se importaron cifradas en Vault una sola vez, con
+autorizacion del propietario. Se conservo la cartera ficticia de GitHub.
+La marca `imported=true` cierra permanentemente ese procedimiento de
+importacion; el importador tambien tiene vencimiento y un SHA fijo aprobado.
+No se necesitan la computadora encendida ni servicios de pago.
+
+## Referencia del procedimiento de migracion
+
+El bot Python se mantuvo en GitHub mientras se preparaba la migracion.
 La consulta privada desde GitHub devolvio HTTP 451; las claves no se pueden
 validar desde ese entorno. No se cambian ni se copian claves a este directorio.
 
@@ -19,7 +33,7 @@ antes de desactivar la programacion anterior. No habilitar operaciones reales.
 El plan Free tiene cuotas y puede pausarse por baja actividad; no ofrece una
 garantia de disponibilidad. No se activa ningun plan de pago.
 
-## Servidor preparado
+## Configuracion del servidor
 
 Proyecto: `qqdyagzvjshhiiqkzfat`, region `sa-east-1`.
 La prueba regional de ambos endpoints devolvio HTTP 200 el 23-10-2026.
