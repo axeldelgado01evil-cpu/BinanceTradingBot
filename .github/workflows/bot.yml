@@ -2,8 +2,7 @@ name: Binance Trading Bot
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "7,22,37,52 * * * *"
+# Automatic reports now run on Supabase in sa-east-1. This is manual fallback only.
 
 permissions:
   contents: write

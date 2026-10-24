@@ -2,14 +2,17 @@
 
 Bot de **analisis y simulacion**. Consulta datos publicos de Binance, revisa BTC,
 ETH, SOL, altcoins liquidas y una lista corta de memecoins, y envia un informe
-por Telegram en cada ejecucion de GitHub Actions. **No compra, vende, transfiere
+por Telegram desde un servidor gratuito de Supabase. **No compra, vende, transfiere
 ni retira activos reales.**
 
 ## Informe y frecuencia
 
-El workflow solicita una ejecucion a los minutos 7, 22, 37 y 52 de cada hora
-(UTC), aproximadamente cada 15 minutos. GitHub Actions puede demorar u omitir
-ejecuciones programadas; no es un servicio de tiempo real. Cada informe muestra:
+Supabase ejecuta el bot a los minutos 00, 15, 30 y 45 de cada hora. La funcion
+se fija en Sao Paulo (`sa-east-1`), donde se verifico la consulta de cuenta.
+El envio llega despues del procesamiento. El plan Free tiene cuotas y no
+garantiza disponibilidad; no se activa ningun plan de pago. GitHub Actions
+queda solo como alternativa manual y ya no tiene horario automatico.
+Cada informe muestra:
 
 - cambios de BTC/ETH/SOL en la ultima vela cerrada de 15 minutos y en 24 horas;
 - tendencia basada en velas cerradas de 4 horas y diarias, RSI, MACD, volumen,
@@ -37,13 +40,17 @@ las nuevas entradas y a 85 se detiene la simulacion; no se reanuda sola.
 Los stops se revisan cada vez que el bot se ejecuta, por lo que **no garantizan**
 un precio ni un limite real de perdidas.
 
-El estado se guarda en `state/paper.json` mediante el `GITHUB_TOKEN` del
-workflow. El repositorio es publico: ese archivo contiene solo operaciones
-**ficticias**, nunca claves o saldos reales.
+El estado activo se guarda en una tabla con RLS y funciones restringidas de
+Supabase. Se conservo la cartera previa al trasladar el bot. El archivo publico
+`state/paper.json` conserva el estado anterior de GitHub y solo contiene
+operaciones **ficticias**, nunca claves o saldos reales.
 
 ## Conexion de Telegram y Binance
 
-Secretos necesarios en *Settings → Secrets and variables → Actions*:
+Las cuatro credenciales del bot estan cifradas en Supabase Vault. Se importaron
+una sola vez desde los secretos existentes de GitHub con autorizacion del
+propietario y verificacion OIDC del workflow. No se muestran en los registros.
+El bot necesita:
 
 - `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` para los mensajes.
 - Opcionales: `BINANCE_API_KEY` y `BINANCE_API_SECRET` para consultar el
@@ -53,8 +60,9 @@ La clave de Binance debe permitir **solamente lectura**. No habilites Spot &
 Margin Trading, Futures, transferencias ni retiros. No pegues claves en el
 codigo, en un commit ni en un chat. El bot hace unicamente una solicitud
 `GET /api/v3/account` firmada, mas consultas publicas de datos de mercado.
-Si Binance bloquea las solicitudes de GitHub por region o por IP, el informe
-publico continuara, pero la seccion de cuenta indicara el error. El saldo
+GitHub devolvio HTTP 451 al consultar la cuenta y por eso se traslado el
+horario a Supabase. Si falla la cuenta, el informe publico continuara, pero
+la seccion de cuenta indicara el error. El saldo
 estimado no es una ganancia/perdida: para eso haria falta el historial de
 compras y comisiones de la cuenta.
 
@@ -63,7 +71,10 @@ compras y comisiones de la cuenta.
 ```powershell
 python -m pip install requests
 python -m unittest discover -s tests -v
+node tests/test_edge.mjs
 ```
 
 No ejecutes `main.py` localmente sin un bot de Telegram de prueba: su
 funcion principal envia un mensaje.
+
+Despliegue y programacion: ver `supabase/README.md` y `supabase/schedule.sql`.
