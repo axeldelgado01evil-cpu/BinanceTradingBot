@@ -4,8 +4,9 @@ import { stripTypeScriptTypes } from 'node:module';
 const env = new Map([['SUPABASE_SERVICE_ROLE_KEY','test-service-key'],['SB_REGION','sa-east-1']]);
 let handler;
 globalThis.Deno = { env: {get:key=>env.get(key)}, serve:fn=>{handler=fn;} };
-const source=stripTypeScriptTypes(await readFile(new URL('../supabase/functions/market-bot/index.ts',import.meta.url),'utf8'));
-const bot=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+import {moduleURL} from './load-ts.mjs';
+const source=await readFile(new URL('../supabase/functions/market-bot/index.ts',import.meta.url),'utf8');
+const bot=await import(await moduleURL(new URL('../supabase/functions/market-bot/index.ts',import.meta.url)));
 const analysis=(symbol,overrides={})=>({symbol,price:100,change:5,change_15m:0.2,volume_24h:50000000,
   rsi:55,histogram:1,volume_ratio:2,atr:2,support:95,resistance:105,trend:'alcista',candle_id:123,
   external:{ok:true,sources:['CMC'],gap:0,reason:'precio contrastado'},...overrides});

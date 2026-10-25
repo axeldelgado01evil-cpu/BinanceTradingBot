@@ -1,0 +1,27 @@
+name: Control externo del bot
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: market-bot-watchdog
+  cancel-in-progress: false
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .watchdog
+          key: watchdog-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: watchdog-state-
+      - name: Verificar actividad y avisar solo ante fallas
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/watchdog.py
+# Standard hosted runner in this public repository. Schedules may be delayed.

@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {moduleURL} from './load-ts.mjs';
+globalThis.Deno={env:{get:key=>key==='SUPABASE_SERVICE_ROLE_KEY'?'server-only':'https://example.supabase.co'},serve:()=>{}};
+const m=await import(await moduleURL(new URL('../supabase/functions/portfolio-panel/index.ts',import.meta.url)));
+const req=(path='',options={})=>new Request('https://example.supabase.co/functions/v1/portfolio-panel'+path,options);
+assert.equal((await m.handle(req())).status,401);
+assert.equal((await m.handle(req('',{method:'POST'}))).status,405);
+assert.equal((await m.handle(req('',{headers:{Origin:'https://evil.example'}}))).status,403);
+assert.equal((await m.handle(req('',{method:'OPTIONS',headers:{Origin:m.ORIGIN}}))).status,204);
+let sent;
+globalThis.fetch=async(url,options)=>{sent=JSON.parse(options.body);return Response.json(null);};
+const token='a'.repeat(64),headers={Authorization:'Bearer '+token,Origin:m.ORIGIN};
+assert.equal((await m.handle(req('',{headers}))).status,401,'unknown/expired hash returns 401');assert.notEqual(sent.p_hash,token);
+globalThis.fetch=async()=>Response.json({records:{portfolio:{total:123}},readOnly:true});
+const ok=await m.handle(req('?days=7',{headers}));assert.equal(ok.status,200);assert.equal(ok.headers.get('Access-Control-Allow-Origin'),m.ORIGIN);assert.equal(ok.headers.get('Cache-Control'),'no-store');assert.equal((await ok.json()).records.portfolio.total,123);
+console.log('panel: missing/expired token, hash, CORS, read-only and no-store passed');

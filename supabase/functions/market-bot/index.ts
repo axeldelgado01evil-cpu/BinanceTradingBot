@@ -1,3 +1,5 @@
+import {ext,refreshPortfolio,reviewContract} from './enhancements.ts';
+import {localCommand,HELP,privateQuestion,safeMemory,monitorTick,recordMarket,performanceText} from './interaction.ts';
 // Account access is GET-only. Paper trades never touch Binance order endpoints.
 const PUBLIC = 'https://data-api.binance.vision';
 const PRIVATE = 'https://api.binance.com';
@@ -23,8 +25,8 @@ type DexItem = {symbol:string;chain:string;address:string;url:string;liquidity:n
 type DexRadar = {scanned:number;qualified:DexItem[];checked:number};
 type Context = { market_change?: number; fear_greed?: number; cmc?:Book; gecko?:Book;
   sources?:Record<string,string>; defi?:{volume:number;change:number;checked:number}; dex?:DexRadar;
-  ai?:string; ai_unavailable?:boolean };
-type PublicSnapshot = {at:number;assets:{asset:string;usdt:number;day:number;trend:string;rsi:number;support:number;resistance:number;checked:boolean}[];sources:Record<string,string>;context:Record<string,number>};
+  ai?:string; ai_unavailable?:boolean;security?:string[] };
+type PublicSnapshot = {at:number;assets:{asset:string;usdt:number;day:number;trend:string;rsi:number;support:number;resistance:number;checked:boolean;signal?:boolean}[];sources:Record<string,string>;context:Record<string,number>};
 const CMC_IDS:Record<number,string>={1:'BTC',1027:'ETH',5426:'SOL',825:'USDT'};
 const GECKO_IDS:Record<string,string>={bitcoin:'BTC',ethereum:'ETH',solana:'SOL',tether:'USDT',
   binancecoin:'BNB',ripple:'XRP',chainlink:'LINK',cardano:'ADA',dogecoin:'DOGE','shiba-inu':'SHIB',pepe:'PEPE',floki:'FLOKI'};
@@ -122,7 +124,7 @@ export function crossCheck(a:Record<string,Analysis>,ctx:Context,now=Date.now())
       reason:!comparisons.length?'sin cotización externa reciente':pegRisk?'USDT se aparta del dólar':gap>2?'precios discrepantes':'precio contrastado'};
   }
 }
-async function market():Promise<Record<string,Analysis>> {
+async function market(extra:string[]=[]):Promise<Record<string,Analysis>> {
   const tickers=await json(PUBLIC+'/api/v3/ticker/24hr');
   const bySymbol:Record<string,Record<string,string>>=Object.fromEntries(tickers.map((t:Record<string,string>)=>[t.symbol,t]));
   const ranked=tickers.filter((t:Record<string,string>)=>{
@@ -130,7 +132,7 @@ async function market():Promise<Record<string,Analysis>> {
     return t.symbol.endsWith('USDT')&&!(t.symbol in CORE)&&!MEMES.includes(t.symbol)&&!STABLES.has(base)
       &&/^[A-Z]+$/.test(base)&&!/(UP|DOWN|BULL|BEAR)$/.test(base)&&volume>=30000000&&change>=2&&change<=15;
   }).sort((a:Record<string,string>,b:Record<string,string>)=>Number(b.quoteVolume)-Number(a.quoteVolume)).slice(0,6);
-  const symbols=[...new Set([...Object.keys(CORE),...WATCH,...ranked.map((t:Record<string,string>)=>t.symbol),...MEMES])];
+  const symbols=[...new Set([...Object.keys(CORE),...extra.filter(s=>/^[A-Z0-9]{1,20}USDT$/.test(s)),...WATCH,...MEMES,...ranked.map((t:Record<string,string>)=>t.symbol)])].slice(0,24);
   const result:Record<string,Analysis>={};
   // Bounded concurrency and at most 51 kline requests per quarter hour.
   for(let offset=0;offset<symbols.length;offset+=4) {
@@ -267,15 +269,15 @@ export function trackAccount(state:State,amounts:Record<string,number>,total:num
   const change=total-previous.total,minutes=Math.max(1,Math.round((now-previous.at)/60000));
   return `\nCambio de valor desde hace ${minutes} min: ${change>=0?'+':'−'}${price(Math.abs(change))} USDT (${percent(change/previous.total*100,2)}), con cantidades iguales. No es tu ganancia desde la compra.`;
 }
-export function publicSnapshot(a:Record<string,Analysis>,ctx:Context,now=Date.now()):PublicSnapshot {
+export function publicSnapshot(a:Record<string,Analysis>,ctx:Context,now=Date.now(),watch:string[]=[]):PublicSnapshot {
   const round=(v:number)=>Number(v.toPrecision(6));
-  const extras=Object.values(a).filter(i=>!(i.symbol in CORE)&&!MEMES.includes(i.symbol)).sort((x,y)=>y.volume_24h-x.volume_24h).slice(0,2).map(i=>i.symbol);
+  const extras=Object.values(a).filter(i=>!(i.symbol in CORE)&&!MEMES.includes(i.symbol)).sort((x,y)=>Number(watch.includes(y.symbol.slice(0,-4)))-Number(watch.includes(x.symbol.slice(0,-4)))||y.volume_24h-x.volume_24h).slice(0,8).map(i=>i.symbol);
   const memes=Object.values(a).filter(i=>MEMES.includes(i.symbol)).sort((x,y)=>y.volume_24h-x.volume_24h).slice(0,2).map(i=>i.symbol);
   const context:Record<string,number>={};
   for(const [key,value]of Object.entries({market_day:ctx.market_change,fear_greed_daily:ctx.fear_greed,dex_volume_day_usd:ctx.defi?.volume}))if(Number.isFinite(value))context[key]=round(value!);
   return {at:now,assets:[...Object.keys(CORE),...extras,...memes].map(symbol=>{
     const i=a[symbol];return {asset:symbol.slice(0,-4),usdt:round(i.price),day:round(i.change),trend:i.trend,
-      rsi:round(i.rsi),support:round(i.support),resistance:round(i.resistance),checked:i.external?.ok===true};
+      rsi:round(i.rsi),support:round(i.support),resistance:round(i.resistance),checked:i.external?.ok===true,signal:entryEligible(i,MEMES.includes(symbol))};
   }),sources:{...ctx.sources},context};
 }
 const aiEnabled=()=>Deno.env.get('GROQ_ENABLED')==='true'&&!!Deno.env.get('GROQ_API_KEY');
@@ -283,10 +285,11 @@ export function safeQuestion(text:string):boolean {
   return text.length>0&&text.length<=250&&!/[A-Za-z0-9_-]{32,}/.test(text)
     &&!/(contrase[nñ]a|password|clave\s+(api|privada|secreta)|frase\s+(semilla|de recuperaci[oó]n)|seed\s+phrase)/i.test(text);
 }
-export async function explain(snapshot:PublicSnapshot,question:string,kind:'chat'|'summary'):Promise<string|null> {
+export async function explain(snapshot:PublicSnapshot,question:string,kind:'chat'|'summary',memory:any[]=[]):Promise<string|null> {
   if(!aiEnabled()||!safeQuestion(question)||!Number.isFinite(snapshot?.at)||Date.now()-snapshot.at>1800000||snapshot.at>Date.now()+300000)return null;
-  const input=JSON.stringify({market:snapshot,question});
-  if(input.length>2200)return null;
+  const market={...snapshot,assets:[...snapshot.assets].sort((a,b)=>Number(question.toUpperCase().includes(b.asset))-Number(question.toUpperCase().includes(a.asset))).slice(0,8)};
+  const input=JSON.stringify({market,question,memory:safeMemory(memory),validation:'Las reglas técnicas no demostraron ventaja en la prueba histórica final. Señal no significa probabilidad de ganar.'});
+  if(input.length>3500)return null;
   try {
     if(!await rpc('bot_ai',{p_action:'reserve',p_data:{kind}}))return null;
     const result=await json('https://api.groq.com/openai/v1/chat/completions',{
@@ -306,10 +309,11 @@ export function ownerUpdate(update:any,config:Config,enabledSince:number,now=Dat
     &&typeof m.text==='string'&&m.date*1000>=enabledSince&&m.date*1000>=now-600000&&m.date*1000<=now+300000;
 }
 async function pollAssistant():Promise<{status:string;replies?:number}> {
-  if(!aiEnabled())return {status:'ai_disabled'};
   const job=await rpc('bot_ai',{p_action:'claim'});if(!job)return {status:'skipped'};
   let offset=Number(job.offset),replies=0;
   try {
+    try{await monitorTick({json,rpc},job.snapshot);}catch{/* monitoring must not block commands */}
+    try{for(const alert of await ext({json,rpc},'pending')){await telegram(job.config,escape('🔔 '+alert.body));await ext({json,rpc},'ack_alert',{id:alert.id});}}catch{/* unacknowledged alerts stay in outbox */}
     const d=await json('https://api.telegram.org/bot'+job.config.TELEGRAM_BOT_TOKEN+'/getUpdates',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({offset,limit:5,timeout:0,allowed_updates:['message']})});
     if(!d.ok||!Array.isArray(d.result))throw new Error('Telegram polling failed');
@@ -318,9 +322,9 @@ async function pollAssistant():Promise<{status:string;replies?:number}> {
       if(ownerUpdate(update,job.config,Date.parse(job.enabled_since))){
         if(replies>=2)break;
         const question=update.message.text.trim();let answer:string;
-        if(/^\/(start|help|ayuda)(@\w+)?\b/i.test(question)){
-          answer='Podés preguntarme por BTC, ETH o SOL. Uso la última lectura del mercado, actualizada cada 15 min; puedo tardar cerca de un minuto en responder. /cartera muestra tu cuenta Spot. La IA recibe los datos públicos y tu pregunta, sin tus saldos ni claves. No envíes información privada. No ejecuto compras ni ventas.';
-        }else if(/^\/cartera\b|cu[aá]nto tengo|\b(saldo|cartera|mi cuenta|mis fondos|mis criptos|mi ganancia)\b/i.test(question)){
+        const local=/^\/cartera\b/i.test(question)?null:await localCommand(question,{json,rpc},Deno.env.get('PANEL_ENABLED')==='true');
+        if(local!==null){answer=local;
+        }else if(/^\/cartera\b/i.test(question)||privateQuestion(question)){
           answer=job.account_text??'Todavía no hay una lectura de tu cuenta. Esperá al próximo informe.';
         }else if(/^(compra(r)?|vende(r)?|s[ií]|confirmo|confirmar|aprobar|autorizo)\b/i.test(question)){
           answer='No ejecuto compras ni ventas ni acepto autorizaciones de operaciones. Puedo explicarte los datos del mercado para que vos decidas y operes en Binance.';
@@ -328,7 +332,9 @@ async function pollAssistant():Promise<{status:string;replies?:number}> {
           answer='Escribí una pregunta de mercado de hasta 250 caracteres, sin claves ni información privada.';
         }else{
           const at=job.snapshot?.at;
-          const text=await explain(job.snapshot,question,'chat');
+          const memory=safeMemory(await ext({json,rpc},'memory'));
+          const text=await explain(job.snapshot,question,'chat',memory);
+          if(text)await ext({json,rpc},'remember',{question,answer:text});
           answer=text?`🤖 IA · Groq\nLectura de mercado: ${new Intl.DateTimeFormat('es-UY',{timeZone:'America/Montevideo',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(at))} (Uruguay).\n${text}\n\nEs una explicación orientativa, no una orden de compra ni una garantía.`:'Ahora no pude generar la explicación (cuota, conexión o datos antiguos). El informe automático sigue activo. Probá más tarde.';
         }
         await telegram(job.config,escape(answer));replies++;
@@ -350,10 +356,6 @@ async function account(config:Config,state:State):Promise<{text:string;ok:boolea
     const signature=Array.from(new Uint8Array(signed)).map(v=>v.toString(16).padStart(2,'0')).join('');
     const d=await json(PRIVATE+'/api/v3/account?'+query+'&signature='+signature,{headers:{'X-MBX-APIKEY':config.BINANCE_API_KEY}});
     const balances=d.balances.map((b:Record<string,string>)=>({asset:b.asset,amount:Number(b.free)+Number(b.locked)})).filter((b:{amount:number})=>b.amount>0);
-    if(!balances.length) {
-      state.account_snapshot={at:Date.now(),total:0,amounts:{},complete:true};
-      return {ok:true,text:'Binance conectado en solo lectura. Tu cuenta Spot no muestra saldos positivos.'};
-    }
     const tickers=await json(PUBLIC+'/api/v3/ticker/price');
     const prices:Record<string,number>=Object.fromEntries(tickers.map((t:Record<string,string>)=>[t.symbol,Number(t.price)]));
     const valued=balances.map((b:{asset:string;amount:number})=>({...b,value:b.amount*(b.asset==='USDT'?1:(prices[b.asset+'USDT']??NaN))}));
@@ -366,7 +368,11 @@ async function account(config:Config,state:State):Promise<{text:string;ok:boolea
     if(total&&known.length) text+=`\nMayor posición: ${known[0].asset} (${Math.round(known[0].value/total*100)} %).`;
     if(valued.length!==known.length) text+='\nHay activos sin precio USDT; no están incluidos en el total.';
     text+=trackAccount(state,Object.fromEntries(balances.map((b:{asset:string;amount:number})=>[b.asset,b.amount])),total,valued.length===known.length);
-    return {ok:true,text:text+'\nNo incluye Futures ni Earn. La ganancia real necesita tu historial de compras.'};
+    try{
+      const enriched=await refreshPortfolio(balances.map((b:any)=>({...b,price:b.asset==='USDT'?1:prices[b.asset+'USDT']??null})),config,{json,rpc});
+      text+='\n'+(enriched.accounting.complete?'Resultado de pares cubiertos: vendido '+price(enriched.accounting.realized??0)+'; sin vender '+price(enriched.accounting.unrealized??0)+' USDT.':'Costo/ganancia: cobertura parcial; /rendimiento explica qué falta.');
+    }catch{text+='\nHistorial pendiente; los saldos siguen disponibles.';}
+    return {ok:true,text:text+'\nSolo Spot; /riesgo y /rendimiento para detalles.'};
   } catch(e) {
     return {ok:false,text:e instanceof HttpFailure&&e.status===451?'Binance no permite consultar la cuenta desde este servidor.':`No se pudo leer Binance (${e instanceof HttpFailure?e.status:'conexión'}). El análisis público sigue activo.`};
   }
@@ -383,7 +389,7 @@ export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;
   for(const symbol of Object.keys(CORE)){
     const i=a[symbol];
     lines.push(`• <b>${symbol.slice(0,-4)}</b>: ${price(i.price)} USDT`, `  15 min: ${percent(i.change_15m,2)} · 24 h: ${percent(i.change)}`);
-    lines.push(candidate(i)?entryEligible(i)?'  🟢 Filtros técnicos y precio contrastado; estudiar.':'  ⚠ Señal técnica sin validar; esperaría.':i.trend==='bajista'||i.rsi>=75?'  🔴 Riesgo elevado; esperaría.':'  🟡 Sin señal clara; esperaría.');
+    lines.push(candidate(i)?entryEligible(i)?'  🟡 Filtros técnicos presentes; eficacia no demostrada.':'  ⚠ Señal técnica sin contraste reciente.':i.trend==='bajista'||i.rsi>=75?'  🔴 Riesgo elevado; esperaría.':'  🟡 Sin señal clara; esperaría.');
   }
   const others=items.filter(i=>!(i.symbol in CORE)&&!MEMES.includes(i.symbol));
   const picks=others.filter(i=>entryEligible(i)).sort((a,b)=>b.volume_24h-a.volume_24h).slice(0,2);
@@ -391,7 +397,7 @@ export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;
   lines.push('\n🔎 <b>Otras criptos</b>',picks.length?'Cumplen filtros: '+picks.map(i=>i.symbol.slice(0,-4)).join(', ')+'.':radar.length?'En observación, sin señal: '+radar.map(i=>i.symbol.slice(0,-4)+' '+percent(i.change)).join(', ')+'.':'Sin candidatos líquidos con señal clara.');
   const memes=items.filter(i=>MEMES.includes(i.symbol)),mp=memes.filter(i=>entryEligible(i,true));
   lines.push('🐸 <b>Memecoins</b>',mp.length?'Señal experimental: '+mp.slice(0,2).map(i=>i.symbol.slice(0,-4)).join(', ')+'.':'En observación, sin señal: '+memes.sort((a,b)=>b.volume_24h-a.volume_24h).slice(0,2).map(i=>i.symbol.slice(0,-4)+' '+percent(i.change)).join(', ')+'.');
-  lines.push('Riesgo alto. El bot no comprueba contratos ni concentración de tenedores.');
+  lines.push('Riesgo alto. GoPlus revisa contratos disponibles; /contrato muestra banderas y datos faltantes. DOGE es nativa: sin revisión de contrato.');
   if(ctx.sources){
     const validated=Object.keys(CORE).filter(s=>a[s].external?.ok),unvalidated=Object.keys(CORE).filter(s=>!a[s].external?.ok);
     lines.push('\n🔗 <b>Cruce de fuentes</b>',`Precios contrastados: ${validated.map(s=>s.slice(0,-4)).join(', ')||'ninguno'}.`);
@@ -405,12 +411,16 @@ export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;
   }
   const btc=a.BTCUSDT;
   lines.push('\n🧭 <b>Qué vigilar en BTC</b>',`Si supera y sostiene ${price(btc.resistance)} USDT con volumen, podría mejorar.`,`Si pierde ${price(btc.support)} USDT, aumenta el riesgo de caída.`);
-  lines.push('\n🏦 <b>Tu cuenta</b>',escape(accountText));
+  lines.push('\n🏦 <b>Tu cuenta</b>',escape(accountText.length>650?accountText.slice(0,620)+'… /cartera para ampliar.':accountText));
+  if(ctx.security?.length)lines.push(ctx.security.join('\n'));
   if(ctx.ai)lines.push('\n🤖 <b>Lectura de la IA · Groq</b>',escape(ctx.ai));
   else if(ctx.ai_unavailable)lines.push('\n🤖 IA no disponible ahora. El informe con datos y cálculos sigue activo.');
   const newsLine=news?`\n📰 <a href="${escape(news.url)}">${escape(news.title)}</a> (CriptoNoticias).`:'';
   if(newsLine&&lines.join('\n').length+newsLine.length<3650)lines.push(newsLine);
-  lines.push('\n<i>Análisis orientativo con varias fuentes. El bot consulta tu cuenta en solo lectura; no ejecuta compras ni ventas reales.</i>');
+  lines.push('\n/evaluacion: reglas sin ventaja histórica demostrada. /ayuda: comandos.\n<i>Solo lectura. No ejecuta compras ni ventas.</i>');
+  // Drop optional source details first; never truncate a Telegram HTML tag.
+  while(lines.join('\n').length>3900){const index=lines.findIndex(l=>l.startsWith('DefiLlama:')||l.startsWith('DEX Screener:')||l.startsWith('• <a href=')||l.includes('(CriptoNoticias).'));if(index<0)break;lines.splice(index,1);}
+  if(lines.join('\n').length>3950)return lines.filter(l=>!l.includes('Consulta hace')&&!l.startsWith('CoinGecko:')).join('\n');
   return lines.join('\n');
 }
 async function telegram(config:Config,text:string){
@@ -446,24 +456,40 @@ Deno.serve(async(req:Request)=>{
     if(!job)return Response.json({status:'skipped'});
     let text=job.report,accountOk:null|boolean=null,aiOk:null|boolean=null;
     if(!text){
-      const [analyses,ctx,news,acc]=await Promise.all([market(),context(job.state),headline(),account(job.config,job.state)]);
+      const watch:string[]=await ext({json,rpc},'get',{key:'watchlist'})??['BTC','ETH','SOL'];
+      const [analyses,ctx,news,acc]=await Promise.all([market(watch.map(a=>a+'USDT')),context(job.state),headline(),account(job.config,job.state)]);
       crossCheck(analyses,ctx);
+      try{
+        ctx.security=[];
+        for(const token of ctx.dex?.qualified??[]){const r=await reviewContract(token.chain,token.address,{json,rpc});ctx.security.push(`${escape(token.symbol)}: GoPlus ${r.state==='risk'?'detectó banderas':r.state==='reviewed'?'sin banderas consultadas':'incompleto'}.`);}
+        // Resolve canonical listed meme contracts through provider IDs, never symbol search.
+        const contracts=await cached(job.state,'meme_contracts',7*86400000,async()=>{
+          const found:any[]=[];for(const id of ['shiba-inu','pepe']){try{const coin=await json('https://api.coingecko.com/api/v3/coins/'+id+'?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false');if(/^0x[0-9a-fA-F]{40}$/.test(coin.platforms?.ethereum))found.push({asset:id==='pepe'?'PEPE':'SHIB',address:coin.platforms.ethereum});}catch{/* do not invent addresses */}}return found;
+        });
+        for(const token of contracts)await reviewContract('ethereum',token.address,{json,rpc});
+      }catch{/* security failure stays unverified */}
+      const snapshot=publicSnapshot(analyses,ctx,Date.now(),watch);
+      try{await recordMarket(snapshot,{json,rpc});}catch{/* portfolio report remains available */}
+      try{await rpc('bot_ai',{p_action:'publish',p_data:{snapshot,account_text:acc.text}});}catch{/* local commands retain previous snapshot */}
       if(aiEnabled()){
-        const snapshot=publicSnapshot(analyses,ctx);
-        try{await rpc('bot_ai',{p_action:'publish',p_data:{snapshot,account_text:acc.text}});}catch{/* optional assistant */}
         ctx.ai=await explain(snapshot,'Explicá el contexto de BTC, ETH y SOL, qué vigilar y los riesgos.','summary')??undefined;
         ctx.ai_unavailable=!ctx.ai;
         aiOk=!!ctx.ai;
       }
       const events=updatePaper(job.state,analyses,new Date().toISOString());
       text=report(analyses,ctx,news,job.state,acc.text,events);accountOk=acc.ok;
+      const prior=await ext({json,rpc},'get',{key:'health'})??{};
+      await ext({json,rpc},'set',{key:'health',value:{...prior,marketAt:snapshot.at,accountOk:acc.ok,aiOk:!!ctx.ai,sources:ctx.sources,version:'portfolio-2'}});
+      for(const [source,status]of Object.entries(ctx.sources??{}))if(status!=='ok')await ext({json,rpc},'alert',{key:'source:'+source,message:source+': '+status+'. Se muestra la falta de datos; no se supone confirmación externa.',cooldown:180});
       if(text.length>4000)throw new Error('Report too long');
       if(!await rpc('bot_stage',{p_lease:job.lease,p_slot:job.slot,p_state:job.state,p_report:text}))throw new Error('Lease expired');
     }
     await telegram(job.config,text);
     if(!await rpc('bot_ack',{p_lease:job.lease}))throw new Error('Acknowledgement failed');
+    try{const health=await ext({json,rpc},'get',{key:'health'})??{};
+      await ext({json,rpc},'set',{key:'health',value:{...health,reportSent:Date.now()}});}catch{/* report was already acknowledged; metadata must not cause a replay */}
     console.log(JSON.stringify({event:'report_sent',slot:job.slot,account_ok:accountOk}));
-    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'multi-source-ai-1',timezone:'America/Montevideo',ai_ok:aiOk});
+    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'portfolio-2',timezone:'America/Montevideo',ai_ok:aiOk});
   }catch(e){
     // Never log request URLs, response payloads, credentials or private account data.
     console.error(JSON.stringify({event:'bot_error',kind:e instanceof HttpFailure?'http_'+e.status:'processing'}));

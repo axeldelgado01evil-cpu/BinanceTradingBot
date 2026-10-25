@@ -1,0 +1,8 @@
+.cache/
+work/
+node_modules/
+.watchdog/
+__pycache__/
+*.pyc
+.env
+.env.local
