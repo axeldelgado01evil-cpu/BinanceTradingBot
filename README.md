@@ -88,6 +88,11 @@ operaciones **ficticias**, nunca claves o saldos reales.
 
 ## IA opcional con Groq Free
 
+Activada el 25 de octubre de 2026 con autorizacion del propietario. Se
+verificaron informes automaticos con lectura de Binance y explicacion de IA,
+la consulta de Telegram cada minuto y el envio de una respuesta a la pregunta
+de prueba del propietario. El plan de Groq se mantuvo en Free.
+
 La integracion opcional usa `qwen/qwen3.8-27b` a traves de Groq, no la API de
 pago de OpenAI ni la suscripcion de ChatGPT. Requiere una cuenta Groq Free,
 una credencial privada `GROQ_API_KEY` en los secretos de la funcion, y
