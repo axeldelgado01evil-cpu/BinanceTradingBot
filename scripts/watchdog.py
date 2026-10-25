@@ -4,6 +4,7 @@ import os
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 HEALTH = "https://qqdyagzvjshhiiqkzfat.supabase.co/functions/v1/portfolio-panel/health"
 
@@ -17,6 +18,10 @@ def run():
     try:
         with urlopen(Request(HEALTH, headers={"User-Agent": "CriptoAlertas-Watchdog"}), timeout=20) as response:
             healthy = json.load(response).get("healthy") is True
+    except HTTPError as error:
+        if error.code in (401, 404):
+            print('Health endpoint awaiting activation; no failure notification sent')
+            return
     except Exception:
         pass
     now = int(time.time())
