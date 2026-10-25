@@ -429,19 +429,22 @@ Deno.serve(async(req:Request)=>{
   try {
     const command=await req.json().catch(()=>({}));
     if(command.action==='assistant_poll')return Response.json(await pollAssistant());
-    if(command.action==='diagnostics'){
+    if(command.action==='diagnostics'||command.action==='ai_diagnostics'){
       // Service-only public-data check: no account, Telegram or paper-state writes.
       const state:State={version:1,cash:100,positions:{},trades:[],last_candle:{},status:'active'};
       const [analyses,ctx]=await Promise.all([market(),context(state)]);crossCheck(analyses,ctx);
+      const snapshot=publicSnapshot(analyses,ctx);
+      const ai=command.action==='ai_diagnostics'?await explain(snapshot,'Explicá qué muestra el mercado y sus límites.','summary'):null;
       const preview=report(analyses,ctx,null,state,'Diagnóstico sin datos privados.',[]);
-      return Response.json({version:'multi-source-1',timezone:'America/Montevideo',header:preview.split('\n')[0],
+      return Response.json({version:'multi-source-ai-1',timezone:'America/Montevideo',header:preview.split('\n')[0],
         sources:ctx.sources,ai_enabled:aiEnabled(),cmc_quotes:Object.keys(ctx.cmc??{}).length,gecko_quotes:Object.keys(ctx.gecko??{}).length,
+        ai_checked:command.action==='ai_diagnostics',ai_ok:!!ai,ai_sample:ai,public_snapshot:snapshot,
         defi_available:!!ctx.defi,dex_scanned:ctx.dex?.scanned??null,
         core_price_checks:Object.fromEntries(Object.keys(CORE).map(s=>[s,analyses[s].external])),report_length:preview.length});
     }
     const slot=Math.floor(Date.now()/900000),job=await rpc('bot_claim',{p_slot:slot});
     if(!job)return Response.json({status:'skipped'});
-    let text=job.report,accountOk:null|boolean=null;
+    let text=job.report,accountOk:null|boolean=null,aiOk:null|boolean=null;
     if(!text){
       const [analyses,ctx,news,acc]=await Promise.all([market(),context(job.state),headline(),account(job.config,job.state)]);
       crossCheck(analyses,ctx);
@@ -450,6 +453,7 @@ Deno.serve(async(req:Request)=>{
         try{await rpc('bot_ai',{p_action:'publish',p_data:{snapshot,account_text:acc.text}});}catch{/* optional assistant */}
         ctx.ai=await explain(snapshot,'Explicá el contexto de BTC, ETH y SOL, qué vigilar y los riesgos.','summary')??undefined;
         ctx.ai_unavailable=!ctx.ai;
+        aiOk=!!ctx.ai;
       }
       const events=updatePaper(job.state,analyses,new Date().toISOString());
       text=report(analyses,ctx,news,job.state,acc.text,events);accountOk=acc.ok;
@@ -459,7 +463,7 @@ Deno.serve(async(req:Request)=>{
     await telegram(job.config,text);
     if(!await rpc('bot_ack',{p_lease:job.lease}))throw new Error('Acknowledgement failed');
     console.log(JSON.stringify({event:'report_sent',slot:job.slot,account_ok:accountOk}));
-    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'multi-source-1',timezone:'America/Montevideo'});
+    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'multi-source-ai-1',timezone:'America/Montevideo',ai_ok:aiOk});
   }catch(e){
     // Never log request URLs, response payloads, credentials or private account data.
     console.error(JSON.stringify({event:'bot_error',kind:e instanceof HttpFailure?'http_'+e.status:'processing'}));
