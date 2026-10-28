@@ -322,7 +322,8 @@ async function pollAssistant():Promise<{status:string;replies?:number}> {
       if(ownerUpdate(update,job.config,Date.parse(job.enabled_since))){
         if(replies>=2)break;
         const question=update.message.text.trim();let answer:string;
-        const local=/^\/cartera\b/i.test(question)?null:await localCommand(question,{json,rpc},Deno.env.get('PANEL_ENABLED')==='true');
+        const panelEnabled=Deno.env.get('PANEL_ENABLED')==='true'||(/^\/panel\b/i.test(question)&&(await ext({json,rpc},'get',{key:'panel_access'}))?.enabled===true);
+        const local=/^\/cartera\b/i.test(question)?null:await localCommand(question,{json,rpc},panelEnabled);
         if(local!==null){answer=local;
         }else if(/^\/cartera\b/i.test(question)||privateQuestion(question)){
           answer=job.account_text??'Todavía no hay una lectura de tu cuenta. Esperá al próximo informe.';
@@ -439,6 +440,13 @@ Deno.serve(async(req:Request)=>{
   try {
     const command=await req.json().catch(()=>({}));
     if(command.action==='assistant_poll')return Response.json(await pollAssistant());
+    if(command.action==='feature_check'){
+      const keys=['portfolio','ledger','risk','validation','health','watchlist','security','markets','fees','flows','forward_evaluation','correlations'];
+      const records=Object.fromEntries(await Promise.all(keys.map(async key=>[key,await ext({json,rpc},'get',{key})])));
+      const commands=await Promise.all(['/rendimiento','/riesgo','/evaluacion','/estado','/alertas','/ayuda'].map(async q=>({command:q,ok:!!await localCommand(q,{json,rpc})})));
+      return Response.json({version:'portfolio-2',records:Object.fromEntries(keys.map(k=>[k,!!records[k]])),commands,
+        history_complete:records.ledger?.complete??false,contract_reviews:Object.keys(records.security??{}).length,correlation_samples:records.correlations?.samples??0});
+    }
     if(command.action==='diagnostics'||command.action==='ai_diagnostics'){
       // Service-only public-data check: no account, Telegram or paper-state writes.
       const state:State={version:1,cash:100,positions:{},trades:[],last_candle:{},status:'active'};
@@ -446,7 +454,7 @@ Deno.serve(async(req:Request)=>{
       const snapshot=publicSnapshot(analyses,ctx);
       const ai=command.action==='ai_diagnostics'?await explain(snapshot,'Explicá qué muestra el mercado y sus límites.','summary'):null;
       const preview=report(analyses,ctx,null,state,'Diagnóstico sin datos privados.',[]);
-      return Response.json({version:'multi-source-ai-1',timezone:'America/Montevideo',header:preview.split('\n')[0],
+      return Response.json({version:'portfolio-2',timezone:'America/Montevideo',header:preview.split('\n')[0],
         sources:ctx.sources,ai_enabled:aiEnabled(),cmc_quotes:Object.keys(ctx.cmc??{}).length,gecko_quotes:Object.keys(ctx.gecko??{}).length,
         ai_checked:command.action==='ai_diagnostics',ai_ok:!!ai,ai_sample:ai,public_snapshot:snapshot,
         defi_available:!!ctx.defi,dex_scanned:ctx.dex?.scanned??null,
