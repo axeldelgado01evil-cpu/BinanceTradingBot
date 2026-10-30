@@ -13,6 +13,15 @@ assert.equal(m.privateQuestion('¿Cuánto tengo en mi cuenta?'),true);
 assert.equal(m.privateQuestion('¿Qué pasa con Bitcoin?'),false);
 assert.deepEqual(m.safeMemory([{question:'mi saldo',answer:'10 USDT'},{question:'Bitcoin',answer:'dato público'}]),[{question:'Bitcoin',answer:'dato público'}]);
 assert.equal(await m.localCommand('¿Qué pasa con BTC?',deps),null);
+for(const command of ['/guardarbtc','/custodia','/metamask','/guardarbtc@CryptoAlertasPersonal_bot']){
+ const guide=await m.localCommand(command,deps);
+ assert.match(guide,/red Bitcoin/);
+ assert.match(guide,/fuera de internet/);
+ assert.match(guide,/no lo ejecuta/);
+ assert.match(guide,/ya no aparece en tu saldo de Binance/);
+ assert.match(guide,/no garantiza ganancias/);
+}
+assert.match(await m.localCommand('/ayuda',deps),/\/guardarbtc/);
 await m.localCommand('/alertas movimiento 4',deps);assert.equal(records.limits.move,4);
 await m.localCommand('/alertas movimiento -2',deps);assert.equal(records.limits.move,4);
 const now=Date.now(),old={at:now-900000,prices:{BTCUSDT:100}},snapshot={at:now-30000,assets:[{asset:'BTC',support:98,resistance:105}]};
