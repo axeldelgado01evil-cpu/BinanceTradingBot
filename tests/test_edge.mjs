@@ -74,6 +74,7 @@ const worstContext={sources:{CMC:'no disponible',CoinGecko:'datos antiguos',Defi
   defi:{volume:12345678900,change:-20,checked:now},dex:{scanned:8,checked:now,qualified:Array(2).fill({symbol:'A'.repeat(15),chain:'solana',url:'https://dexscreener.com/solana/'+'A'.repeat(88),liquidity:123456789})}};
 const worst=bot.report(check,worstContext,null,afterEntry,'Cuenta Spot\n'+Array(5).fill('• SHIB: ≈123456789,123456 (≈123456789,12 USDT)').join('\n'),Array(3).fill('Compra de prueba de BTC por 100 USDT. Salida por pérdida: 123456; objetivo: 123456.'));
 assert.ok(worst.length<4000,`Worst-case report length: ${worst.length}`);
+assert.ok(bot.report(check,{...worstContext,ai:'A'.repeat(500),laboratory:{scanned:18,candidates:Array(12).fill({basic:true})}},null,afterEntry,'Cuenta Spot\n'+'S'.repeat(650),[]).length<4000,'laboratory must fit Telegram report');
 assert.ok(bot.report(check,{...worstContext,ai:'A'.repeat(500)},null,afterEntry,'Cuenta Spot\n'+Array(5).fill('• SHIB: ≈123456789,123456 (≈123456789,12 USDT)').join('\n')+'\nCambio desde lectura anterior: +100,00 USDT.',[]).length<4000);
 const snapshot=bot.publicSnapshot(a,{sources:{CMC:'ok',CoinGecko:'ok'}},now);
 assert.deepEqual(snapshot.assets.slice(0,3).map(x=>x.asset),['BTC','ETH','SOL']);

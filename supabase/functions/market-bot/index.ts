@@ -1,4 +1,5 @@
 import {ext,refreshPortfolio,reviewContract} from './enhancements.ts';
+import {refreshLaboratory} from './laboratory.ts';
 import {localCommand,HELP,privateQuestion,safeMemory,monitorTick,recordMarket,performanceText} from './interaction.ts';
 // Account access is GET-only. Paper trades never touch Binance order endpoints.
 const PUBLIC = 'https://data-api.binance.vision';
@@ -25,8 +26,8 @@ type DexItem = {symbol:string;chain:string;address:string;url:string;liquidity:n
 type DexRadar = {scanned:number;qualified:DexItem[];checked:number};
 type Context = { market_change?: number; fear_greed?: number; cmc?:Book; gecko?:Book;
   sources?:Record<string,string>; defi?:{volume:number;change:number;checked:number}; dex?:DexRadar;
-  ai?:string; ai_unavailable?:boolean;security?:string[] };
-type PublicSnapshot = {at:number;assets:{asset:string;usdt:number;day:number;trend:string;rsi:number;support:number;resistance:number;checked:boolean;signal?:boolean}[];sources:Record<string,string>;context:Record<string,number>};
+  ai?:string; ai_unavailable?:boolean;security?:string[];laboratory?:any };
+type PublicSnapshot = {at:number;assets:{asset:string;usdt:number;day:number;trend:string;rsi:number;support:number;resistance:number;checked:boolean;signal?:boolean}[];sources:Record<string,string>;context:Record<string,number>;laboratory?:any};
 const CMC_IDS:Record<number,string>={1:'BTC',1027:'ETH',5426:'SOL',825:'USDT'};
 const GECKO_IDS:Record<string,string>={bitcoin:'BTC',ethereum:'ETH',solana:'SOL',tether:'USDT',
   binancecoin:'BNB',ripple:'XRP',chainlink:'LINK',cardano:'ADA',dogecoin:'DOGE','shiba-inu':'SHIB',pepe:'PEPE',floki:'FLOKI'};
@@ -288,6 +289,7 @@ export function safeQuestion(text:string):boolean {
 export async function explain(snapshot:PublicSnapshot,question:string,kind:'chat'|'summary',memory:any[]=[]):Promise<string|null> {
   if(!aiEnabled()||!safeQuestion(question)||!Number.isFinite(snapshot?.at)||Date.now()-snapshot.at>1800000||snapshot.at>Date.now()+300000)return null;
   const market={...snapshot,assets:[...snapshot.assets].sort((a,b)=>Number(question.toUpperCase().includes(b.asset))-Number(question.toUpperCase().includes(a.asset))).slice(0,8)};
+  if(!/laboratorio|radar|meme|contrato/i.test(question))delete market.laboratory;
   const input=JSON.stringify({market,question,memory:safeMemory(memory),validation:'Las reglas técnicas no demostraron ventaja en la prueba histórica final. Señal no significa probabilidad de ganar.'});
   if(input.length>3500)return null;
   try {
@@ -414,6 +416,7 @@ export function report(a:Record<string,Analysis>,ctx:Context,news:{title:string;
   lines.push('\n🧭 <b>Qué vigilar en BTC</b>',`Si supera y sostiene ${price(btc.resistance)} USDT con volumen, podría mejorar.`,`Si pierde ${price(btc.support)} USDT, aumenta el riesgo de caída.`);
   lines.push('\n🏦 <b>Tu cuenta</b>',escape(accountText.length>650?accountText.slice(0,620)+'… /cartera para ampliar.':accountText));
   if(ctx.security?.length)lines.push(ctx.security.join('\n'));
+  if(ctx.laboratory)lines.push('\n🧪 <b>Laboratorio</b>: '+ctx.laboratory.scanned+' perfiles; '+ctx.laboratory.candidates.filter((c:any)=>c.basic).length+' con filtros de liquidez. /laboratorio para ver riesgos y seguimiento.');
   if(ctx.ai)lines.push('\n🤖 <b>Lectura de la IA · Groq</b>',escape(ctx.ai));
   else if(ctx.ai_unavailable)lines.push('\n🤖 IA no disponible ahora. El informe con datos y cálculos sigue activo.');
   const newsLine=news?`\n📰 <a href="${escape(news.url)}">${escape(news.title)}</a> (CriptoNoticias).`:'';
@@ -440,11 +443,16 @@ Deno.serve(async(req:Request)=>{
   try {
     const command=await req.json().catch(()=>({}));
     if(command.action==='assistant_poll')return Response.json(await pollAssistant());
+    if(command.action==='laboratory_refresh'){
+      const snapshot=await ext({json,rpc},'get',{key:'markets'});
+      const lab=await refreshLaboratory({json,rpc},snapshot);
+      return Response.json({version:'laboratory-1',at:lab.at,scanned:lab.scanned,candidates:lab.candidates.length,sourceOk:lab.sourceOk});
+    }
     if(command.action==='feature_check'){
-      const keys=['portfolio','ledger','risk','validation','health','watchlist','security','markets','fees','flows','forward_evaluation','correlations'];
+      const keys=['portfolio','ledger','risk','validation','health','watchlist','security','markets','fees','flows','forward_evaluation','correlations','laboratory'];
       const records=Object.fromEntries(await Promise.all(keys.map(async key=>[key,await ext({json,rpc},'get',{key})])));
-      const commands=await Promise.all(['/rendimiento','/riesgo','/evaluacion','/estado','/alertas','/ayuda'].map(async q=>({command:q,ok:!!await localCommand(q,{json,rpc})})));
-      return Response.json({version:'portfolio-2',records:Object.fromEntries(keys.map(k=>[k,!!records[k]])),commands,
+      const commands=await Promise.all(['/rendimiento','/riesgo','/evaluacion','/estado','/alertas','/ayuda','/laboratorio'].map(async q=>({command:q,ok:!!await localCommand(q,{json,rpc})})));
+      return Response.json({version:'laboratory-1',records:Object.fromEntries(keys.map(k=>[k,!!records[k]])),commands,
         history_complete:records.ledger?.complete??false,contract_reviews:Object.keys(records.security??{}).length,correlation_samples:records.correlations?.samples??0});
     }
     if(command.action==='diagnostics'||command.action==='ai_diagnostics'){
@@ -454,7 +462,7 @@ Deno.serve(async(req:Request)=>{
       const snapshot=publicSnapshot(analyses,ctx);
       const ai=command.action==='ai_diagnostics'?await explain(snapshot,'Explicá qué muestra el mercado y sus límites.','summary'):null;
       const preview=report(analyses,ctx,null,state,'Diagnóstico sin datos privados.',[]);
-      return Response.json({version:'portfolio-2',timezone:'America/Montevideo',header:preview.split('\n')[0],
+      return Response.json({version:'laboratory-1',timezone:'America/Montevideo',header:preview.split('\n')[0],
         sources:ctx.sources,ai_enabled:aiEnabled(),cmc_quotes:Object.keys(ctx.cmc??{}).length,gecko_quotes:Object.keys(ctx.gecko??{}).length,
         ai_checked:command.action==='ai_diagnostics',ai_ok:!!ai,ai_sample:ai,public_snapshot:snapshot,
         defi_available:!!ctx.defi,dex_scanned:ctx.dex?.scanned??null,
@@ -477,6 +485,10 @@ Deno.serve(async(req:Request)=>{
         for(const token of contracts)await reviewContract('ethereum',token.address,{json,rpc});
       }catch{/* security failure stays unverified */}
       const snapshot=publicSnapshot(analyses,ctx,Date.now(),watch);
+      try{
+        ctx.laboratory=await refreshLaboratory({json,rpc},snapshot);
+        snapshot.laboratory={at:ctx.laboratory.at,scanned:ctx.laboratory.scanned,tokens:ctx.laboratory.candidates.slice(0,3).map((c:any)=>({symbol:c.symbol,chain:c.chain,priceUSD:c.price,day:c.day,state:c.state,flags:c.flags.slice(0,2)})),notice:'Observación pública, no órdenes ni rentabilidad demostrada.'};
+      }catch{/* laboratory failure cannot block the regular report */}
       try{await recordMarket(snapshot,{json,rpc});}catch{/* portfolio report remains available */}
       try{await rpc('bot_ai',{p_action:'publish',p_data:{snapshot,account_text:acc.text}});}catch{/* local commands retain previous snapshot */}
       if(aiEnabled()){
@@ -487,7 +499,7 @@ Deno.serve(async(req:Request)=>{
       const events=updatePaper(job.state,analyses,new Date().toISOString());
       text=report(analyses,ctx,news,job.state,acc.text,events);accountOk=acc.ok;
       const prior=await ext({json,rpc},'get',{key:'health'})??{};
-      await ext({json,rpc},'set',{key:'health',value:{...prior,marketAt:snapshot.at,accountOk:acc.ok,aiOk:!!ctx.ai,sources:ctx.sources,version:'portfolio-2'}});
+      await ext({json,rpc},'set',{key:'health',value:{...prior,marketAt:snapshot.at,accountOk:acc.ok,aiOk:!!ctx.ai,sources:ctx.sources,version:'laboratory-1'}});
       for(const [source,status]of Object.entries(ctx.sources??{}))if(status!=='ok')await ext({json,rpc},'alert',{key:'source:'+source,message:source+': '+status+'. Se muestra la falta de datos; no se supone confirmación externa.',cooldown:180});
       if(text.length>4000)throw new Error('Report too long');
       if(!await rpc('bot_stage',{p_lease:job.lease,p_slot:job.slot,p_state:job.state,p_report:text}))throw new Error('Lease expired');
@@ -497,7 +509,7 @@ Deno.serve(async(req:Request)=>{
     try{const health=await ext({json,rpc},'get',{key:'health'})??{};
       await ext({json,rpc},'set',{key:'health',value:{...health,reportSent:Date.now()}});}catch{/* report was already acknowledged; metadata must not cause a replay */}
     console.log(JSON.stringify({event:'report_sent',slot:job.slot,account_ok:accountOk}));
-    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'portfolio-2',timezone:'America/Montevideo',ai_ok:aiOk});
+    return Response.json({status:'sent',slot:job.slot,account_ok:accountOk,version:'laboratory-1',timezone:'America/Montevideo',ai_ok:aiOk});
   }catch(e){
     // Never log request URLs, response payloads, credentials or private account data.
     console.error(JSON.stringify({event:'bot_error',kind:e instanceof HttpFailure?'http_'+e.status:'processing'}));

@@ -1,7 +1,8 @@
 import {ext,exchangeRules,reviewContract} from './enhancements.ts';
 import {DEFAULT_LIMITS,correlation} from './analytics.ts';
+import {laboratoryText} from './laboratory.ts';
 type Deps={json:(url:string,options?:RequestInit)=>Promise<any>;rpc:(name:string,args:Record<string,unknown>)=>Promise<any>};
-export const PANEL='https://cripto-alertas-axel-panel.ablegoat69.chatgpt.site';
+export const PANEL='https://cripto-alertas-axel-panel.axeldelgado01evil.chatgpt.site';
 export const BTC_CUSTODY_GUIDE=[
   '₿ BTC a largo plazo · guía de custodia',
   '1. Si decidís comprar BTC, usá una plataforma confiable y revisá las comisiones de compra y retiro.',
@@ -14,7 +15,7 @@ export const BTC_CUSTODY_GUIDE=[
 ].join('\n\n');
 const n=(v:any)=>typeof v==='number'&&Number.isFinite(v)?new Intl.NumberFormat('es-UY',{maximumFractionDigits:2}).format(v):'sin datos';
 const when=(v:number)=>v?new Intl.DateTimeFormat('es-UY',{timeZone:'America/Montevideo',dateStyle:'short',timeStyle:'short'}).format(new Date(v)):'sin lectura';
-export const HELP='Consultas de mercado: escribí tu pregunta.\n/cartera · saldos Spot\n/rendimiento · costos y ganancias conocidas\n/riesgo · exposición y comisiones\n/evaluacion · pruebas de las reglas\n/estado · fuentes y funcionamiento\n/seguir ADA · agregar a observación\n/dejar ADA · quitar de observación\n/alertas · umbrales y configuración\n/contrato solana DIRECCION · revisar riesgos\n/panel · abrir tu app privada\n/guardarbtc · BTC a largo plazo y MetaMask\n/olvidar · borrar contexto de conversación\n\nInformes cada 15 min; revisión de precios cada 2 min, sujeta al servidor. Hora de Uruguay. Solo lectura: no compra ni vende. Groq recibe datos públicos y tus preguntas, nunca saldos ni claves.';
+export const HELP='Consultas de mercado: escribí tu pregunta.\n/cartera · saldos Spot\n/rendimiento · costos y ganancias conocidas\n/riesgo · exposición y comisiones\n/evaluacion · pruebas de las reglas\n/estado · fuentes y funcionamiento\n/seguir ADA · agregar a observación\n/dejar ADA · quitar de observación\n/alertas · umbrales y configuración\n/contrato solana DIRECCION · revisar riesgos\n/laboratorio · radar, riesgos y seguimiento\n/panel · abrir tu app privada\n/guardarbtc · BTC a largo plazo y MetaMask\n/olvidar · borrar contexto de conversación\n\nInformes cada 15 min; revisión de precios cada 2 min, sujeta al servidor. Hora de Uruguay. Solo lectura: no compra ni vende. Groq recibe datos públicos y tus preguntas, nunca saldos ni claves.';
 export const validationText=(v:any)=>{
   const h=v?.segments?.holdout;
   return h?`Evaluación técnica histórica · ${when(v.generated)}\nPeríodo final reservado: ${n(h.returnPercent)} %; comprar y mantener la misma distribución: ${n(h.benchmarkReturnPercent)} %.\nCaída máxima: ${n(h.maxDrawdown)} %. ${h.closedTrades} operaciones cerradas.\nCostos supuestos: comisión ${n(h.fee*100)} % y deslizamiento ${n(h.slippage*100)} % por lado.\nEstas reglas NO demostraron una ventaja en el período final. Solo se evalúa el componente técnico: no se reconstruye el contraste histórico CMC/CoinGecko. No es una probabilidad de ganar. Ver sensibilidad y períodos en /panel.`:'Todavía no se cargó la evaluación histórica. Las señales no están validadas.';
@@ -30,6 +31,7 @@ export async function localCommand(question:string,d:Deps,panelEnabled=false):Pr
   const [command,...args]=question.trim().split(/\s+/),cmd=command.toLowerCase().replace(/@\w+$/,'');
   const get=(key:string)=>ext(d,'get',{key});
   if(['/start','/help','/ayuda'].includes(cmd))return HELP;
+  if(['/laboratorio','/lab','/radar'].includes(cmd))return laboratoryText(await get('laboratory'));
   if(['/guardarbtc','/custodia','/metamask'].includes(cmd))return BTC_CUSTODY_GUIDE;
   if(cmd==='/olvidar'){await ext(d,'forget');return 'Borré el contexto breve de tus preguntas. Las próximas consultas empiezan sin esa memoria.';}
   if(cmd==='/rendimiento')return performanceText(await get('ledger'));
