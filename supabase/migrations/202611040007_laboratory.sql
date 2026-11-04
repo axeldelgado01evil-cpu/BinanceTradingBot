@@ -14,4 +14,3 @@ begin
 end $$;
 revoke all on function public.bot_panel(text,integer) from public,anon,authenticated;
 grant execute on function public.bot_panel(text,integer) to service_role;
-
